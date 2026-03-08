@@ -10,6 +10,8 @@ plugins:
     out: gen/go
     opt:
       - paths=source_relative
-  # Dart protobuf stubs (for kayten-app)
-  - remote: buf.build/protocolbuffers/dart
+  # Dart protobuf + gRPC stubs (for kayten-app)
+  - local: protoc-gen-dart
     out: gen/dart
+    opt:
+      - grpc
