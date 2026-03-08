@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+service AttestationService {
+  rpc SubmitAttestation(SubmitAttestationRequest) returns (SubmitAttestationResponse);
+  rpc VerifyAttestation(VerifyAttestationRequest) returns (VerifyAttestationResponse);
+}
+
+message SubmitAttestationRequest {
+  string device_id = 1;
+  bytes keystore_ecdh_pub = 2;
+  repeated bytes cert_chain = 3;
+}
+
+message SubmitAttestationResponse {
+  bool accepted = 1;
+}
+
+message VerifyAttestationRequest {
+  string device_id = 1;
+}
+
+message VerifyAttestationResponse {
+  bool is_verified = 1;
+  string security_level = 2;
+  string os_version = 3;
+  string os_patch_level = 4;
+  string boot_state = 5;
+}

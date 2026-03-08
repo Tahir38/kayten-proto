@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+service UserService {
+  rpc GetProfile(GetProfileRequest) returns (UserProfile);
+  rpc UpdateProfile(UpdateProfileRequest) returns (UserProfile);
+}
+
+message GetProfileRequest {
+  string user_id = 1;
+}
+
+message UpdateProfileRequest {
+  string display_name = 1;
+  string avatar_url = 2;
+  string status_message = 3;
+}
+
+message UserProfile {
+  string user_id = 1;
+  string display_name = 2;
+  string avatar_url = 3;
+  string status_message = 4;
+}

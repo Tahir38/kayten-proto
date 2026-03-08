@@ -1,0 +1,191 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+import "google/protobuf/timestamp.proto";
+
+// Envelope wraps all WebSocket messages between client and server.
+message Envelope {
+  EnvelopeType type = 1;
+  string id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+
+  oneof payload {
+    SendMessage send_message = 10;
+    ReceiveMessage receive_message = 11;
+    MessageAck message_ack = 12;
+    DeliveryReceipt delivery_receipt = 13;
+    ReadReceipt read_receipt = 14;
+    TypingIndicator typing_indicator = 15;
+    CallOffer call_offer = 20;
+    CallAnswer call_answer = 21;
+    CallIceCandidate call_ice_candidate = 22;
+    CallHangup call_hangup = 23;
+    CallRinging call_ringing = 24;
+    CallDtlsFingerprint call_dtls_fingerprint = 25;
+    CallVoiceRekey call_voice_rekey = 26;
+    KeyExchangeRequest key_exchange_request = 30;
+    KeyExchangeResponse key_exchange_response = 31;
+    KeyRatchetNotify key_ratchet_notify = 32;
+    KeyChangeAlert key_change_alert = 33;
+    PresenceUpdate presence_update = 40;
+    SyncRequest sync_request = 50;
+    SyncResponse sync_response = 51;
+    WsAuthRequest ws_auth_request = 60;
+    WsAuthResponse ws_auth_response = 61;
+    OpkReplenishNeeded opk_replenish_needed = 62;
+    DeviceRevoked device_revoked = 70;
+    ErrorPayload error_payload = 99;
+  }
+}
+
+enum EnvelopeType {
+  ENVELOPE_TYPE_UNSPECIFIED = 0;
+  SEND_MESSAGE = 1;
+  RECEIVE_MESSAGE = 2;
+  MESSAGE_ACK = 3;
+  DELIVERY_RECEIPT = 4;
+  READ_RECEIPT = 5;
+  TYPING_INDICATOR = 6;
+  CALL_OFFER = 10;
+  CALL_ANSWER = 11;
+  CALL_ICE_CANDIDATE = 12;
+  CALL_HANGUP = 13;
+  CALL_RINGING = 14;
+  CALL_DTLS_FINGERPRINT = 15;
+  CALL_VOICE_REKEY = 16;
+  KEY_EXCHANGE_REQUEST = 20;
+  KEY_EXCHANGE_RESPONSE = 21;
+  KEY_RATCHET_NOTIFY = 22;
+  KEY_CHANGE_ALERT = 23;
+  PRESENCE_UPDATE = 30;
+  SYNC_REQUEST = 40;
+  SYNC_RESPONSE = 41;
+  DEVICE_ATTESTATION_CHALLENGE = 50;
+  DEVICE_REVOKED = 51;
+  WS_AUTH_REQUEST = 60;
+  WS_AUTH_RESPONSE = 61;
+  OPK_REPLENISH_NEEDED = 62;
+  ERROR = 99;
+}
+
+message SendMessage {
+  string conversation_id = 1;
+  string recipient_id = 2;
+  string recipient_device_id = 3;
+  bytes ciphertext = 4;
+  bytes iv = 5;
+  bytes tag = 6;
+  bytes signature = 7;
+  string msg_type = 8;
+  int32 padded_size = 9;
+  bytes ratchet_pub = 10;
+  int32 ratchet_seq = 11;
+}
+
+message ReceiveMessage {
+  string message_id = 1;
+  string conversation_id = 2;
+  string sender_id = 3;
+  string sender_device_id = 4;
+  bytes ciphertext = 5;
+  bytes iv = 6;
+  bytes tag = 7;
+  bytes signature = 8;
+  string msg_type = 9;
+  int32 padded_size = 10;
+  bytes ratchet_pub = 11;
+  int32 ratchet_seq = 12;
+  int64 server_seq = 13;
+  google.protobuf.Timestamp server_timestamp = 14;
+}
+
+message MessageAck {
+  string message_id = 1;
+  int64 server_seq = 2;
+}
+
+message DeliveryReceipt {
+  string message_id = 1;
+  google.protobuf.Timestamp delivered_at = 2;
+}
+
+message ReadReceipt {
+  string message_id = 1;
+  google.protobuf.Timestamp read_at = 2;
+}
+
+message TypingIndicator {
+  string conversation_id = 1;
+  bool is_typing = 2;
+}
+
+message KeyExchangeRequest {
+  string target_device_id = 1;
+  bytes ecdh_pub = 2;
+  bytes identity_pub = 3;
+  bytes prekey_id_used = 4;
+}
+
+message KeyExchangeResponse {
+  string from_device_id = 1;
+  bytes ecdh_pub = 2;
+  bool accepted = 3;
+}
+
+message KeyRatchetNotify {
+  string conversation_id = 1;
+  bytes new_ratchet_pub = 2;
+  int32 ratchet_seq = 3;
+}
+
+message KeyChangeAlert {
+  string device_id = 1;
+  string reason = 2;
+}
+
+message PresenceUpdate {
+  string user_id = 1;
+  bool online = 2;
+  google.protobuf.Timestamp last_seen = 3;
+}
+
+message SyncRequest {
+  int64 last_server_seq = 1;
+}
+
+message SyncResponse {
+  repeated ReceiveMessage messages = 1;
+  bool has_more = 2;
+}
+
+message WsAuthRequest {
+  bytes challenge = 1;
+}
+
+message WsAuthResponse {
+  string jwt = 1;
+  string device_id = 2;
+  int32 protocol_version = 3;
+  int64 last_server_seq = 4;
+  string status = 5;
+  int64 server_time = 6;
+  string error_code = 7;
+}
+
+message OpkReplenishNeeded {
+  int32 remaining_count = 1;
+  int32 recommended_upload = 2;
+}
+
+message DeviceRevoked {
+  string device_id = 1;
+  string reason = 2;
+}
+
+message ErrorPayload {
+  int32 code = 1;
+  string message = 2;
+}

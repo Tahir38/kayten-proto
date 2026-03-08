@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+service DeviceService {
+  // Upload signed prekeys (SPK + OPK batch).
+  rpc UploadPrekeys(UploadPrekeysRequest) returns (UploadPrekeysResponse);
+
+  // Fetch a prekey bundle for initiating a session with a device.
+  rpc GetPrekey(GetPrekeyRequest) returns (GetPrekeyResponse);
+
+  // Get the identity key for a device.
+  rpc GetIdentityKey(GetIdentityKeyRequest) returns (GetIdentityKeyResponse);
+
+  // Check attestation status for a device.
+  rpc GetAttestationStatus(AttestationRequest) returns (AttestationResponse);
+
+  // Revoke a device (marks all keys as invalid).
+  rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
+
+  // Upload an encrypted file in chunks (client-streaming).
+  rpc UploadFile(stream FileChunk) returns (FileUploadResponse);
+
+  // Download an encrypted file in chunks (server-streaming).
+  rpc DownloadFile(FileDownloadRequest) returns (stream FileChunk);
+}
+
+message Prekey {
+  int32 prekey_id = 1;
+  bytes ecdh_pub = 2;
+  bytes signature = 3;
+  bool is_one_time = 4;
+}
+
+message UploadPrekeysRequest {
+  string device_id = 1;
+  repeated Prekey prekeys = 2;
+}
+
+message UploadPrekeysResponse {
+  int32 stored_count = 1;
+}
+
+message GetPrekeyRequest {
+  string device_id = 1;
+}
+
+message GetPrekeyResponse {
+  Prekey signed_prekey = 1;
+  Prekey one_time_prekey = 2;
+  bytes identity_ed25519_pub = 3;
+  bytes identity_ecdh_pub = 4;
+}
+
+message GetIdentityKeyRequest {
+  string device_id = 1;
+}
+
+message GetIdentityKeyResponse {
+  bytes ed25519_pub = 1;
+  bytes ecdh_pub = 2;
+  bytes signature = 3;
+}
+
+message AttestationRequest {
+  string device_id = 1;
+}
+
+message AttestationResponse {
+  bool is_verified = 1;
+  string security_level = 2;
+  string os_version = 3;
+}
+
+message RevokeDeviceRequest {
+  string device_id = 1;
+  string reason = 2;
+}
+
+message RevokeDeviceResponse {
+  bool success = 1;
+}
+
+message FileChunk {
+  string file_id = 1;
+  int32 chunk_index = 2;
+  bytes data = 3;
+  int64 total_size = 4;
+  string mime_type = 5;
+  bytes sha256_hash = 6;
+}
+
+message FileUploadResponse {
+  string file_id = 1;
+  int64 size_bytes = 2;
+}
+
+message FileDownloadRequest {
+  string file_id = 1;
+}

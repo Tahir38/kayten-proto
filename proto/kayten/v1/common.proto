@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+import "google/protobuf/timestamp.proto";
+
+message DeviceInfo {
+  string device_id = 1;
+  string device_name = 2;
+  string hsm_serial = 3;
+  string hsm_firmware_version = 4;
+  string platform = 5;
+  google.protobuf.Timestamp last_active_at = 6;
+  bool is_active = 7;
+}
+
+message ErrorResponse {
+  string code = 1;
+  string message = 2;
+}

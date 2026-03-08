@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+service ContactService {
+  // Privacy-preserving contact discovery using SHA-256 phone hashes.
+  rpc DiscoverContacts(ContactDiscoveryRequest) returns (ContactDiscoveryResponse);
+
+  // Get the server-side salt for phone hash computation.
+  rpc GetContactSalt(SaltRequest) returns (SaltResponse);
+}
+
+message ContactDiscoveryRequest {
+  repeated bytes phone_hashes = 1;
+}
+
+message ContactDiscoveryResponse {
+  repeated ContactMatch matches = 1;
+}
+
+message ContactMatch {
+  bytes phone_hash = 1;
+  string user_id = 2;
+  string display_name = 3;
+  bytes ed25519_pub = 4;
+}
+
+message SaltRequest {}
+
+message SaltResponse {
+  bytes salt = 1;
+  int64 valid_until = 2;
+}

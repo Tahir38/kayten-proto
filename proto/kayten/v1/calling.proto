@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+message CallOffer {
+  string conversation_id = 1;
+  string sdp_offer = 2;
+  string call_type = 3;
+  bytes dtls_fingerprint = 4;
+  bytes dtls_fingerprint_signature = 5;
+  bytes signer_identity_pub = 6;
+  bytes voice_ecdh_pub = 7;
+  string voice_mode = 8;
+}
+
+message CallAnswer {
+  string conversation_id = 1;
+  string sdp_answer = 2;
+  bytes dtls_fingerprint = 3;
+  bytes dtls_fingerprint_signature = 4;
+  bytes signer_identity_pub = 5;
+  bytes voice_ecdh_pub = 6;
+  string voice_mode = 7;
+}
+
+message CallIceCandidate {
+  string conversation_id = 1;
+  string candidate = 2;
+  string sdp_mid = 3;
+  int32 sdp_mline_index = 4;
+}
+
+message CallHangup {
+  string conversation_id = 1;
+  string reason = 2;
+}
+
+message CallRinging {
+  string conversation_id = 1;
+}
+
+message CallDtlsFingerprint {
+  string conversation_id = 1;
+  bytes fingerprint = 2;
+  bytes signature = 3;
+}
+
+message CallVoiceRekey {
+  string conversation_id = 1;
+  bytes new_ecdh_pub = 2;
+  int32 epoch_id = 3;
+}

@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+service AuthService {
+  // Request SMS verification code for phone number.
+  rpc RequestVerification(VerificationRequest) returns (VerificationResponse);
+
+  // Verify SMS code and register device. Returns JWT tokens.
+  rpc VerifyCode(VerifyCodeRequest) returns (AuthTokenResponse);
+
+  // Refresh an expired access token using a valid refresh token.
+  rpc RefreshToken(RefreshRequest) returns (AuthTokenResponse);
+}
+
+message VerificationRequest {
+  string phone_number = 1;
+}
+
+message VerificationResponse {
+  bool success = 1;
+  int32 retry_after_seconds = 2;
+}
+
+message VerifyCodeRequest {
+  string phone_number = 1;
+  string code = 2;
+  bytes ed25519_public_key = 3;
+  bytes ecdh_public_key = 4;
+  bytes identity_signature = 5;
+  string hsm_serial = 6;
+  string hsm_firmware_version = 7;
+  string device_name = 8;
+  bytes keystore_ecdh_public_key = 9;
+  repeated bytes attestation_cert_chain = 10;
+}
+
+message AuthTokenResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  string user_id = 3;
+  string device_id = 4;
+  int64 expires_at = 5;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+  string device_id = 2;
+}

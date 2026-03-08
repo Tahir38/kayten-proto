@@ -1,0 +1,15 @@
+version: v2
+plugins:
+  # Go protobuf stubs
+  - remote: buf.build/protocolbuffers/go
+    out: gen/go
+    opt:
+      - paths=source_relative
+  # Go gRPC stubs
+  - remote: buf.build/grpc/go
+    out: gen/go
+    opt:
+      - paths=source_relative
+  # Dart protobuf stubs (for kayten-app)
+  - remote: buf.build/protocolbuffers/dart
+    out: gen/dart
