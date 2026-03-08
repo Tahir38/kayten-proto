@@ -5,6 +5,7 @@ package kayten.v1;
 option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
 
 import "google/protobuf/timestamp.proto";
+import "kayten/v1/calling.proto";
 
 // Envelope wraps all WebSocket messages between client and server.
 message Envelope {
