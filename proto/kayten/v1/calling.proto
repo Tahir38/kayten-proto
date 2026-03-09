@@ -13,6 +13,10 @@ message CallOffer {
   bytes signer_identity_pub = 6;
   bytes voice_ecdh_pub = 7;
   string voice_mode = 8;
+  // Server-populated TURN credentials for the recipient.
+  string turn_username = 9;
+  string turn_credential = 10;
+  repeated string turn_urls = 11;
 }
 
 message CallAnswer {
@@ -23,6 +27,10 @@ message CallAnswer {
   bytes signer_identity_pub = 5;
   bytes voice_ecdh_pub = 6;
   string voice_mode = 7;
+  // Server-populated TURN credentials for the caller.
+  string turn_username = 8;
+  string turn_credential = 9;
+  repeated string turn_urls = 10;
 }
 
 message CallIceCandidate {
