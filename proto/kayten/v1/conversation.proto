@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+import "google/protobuf/timestamp.proto";
+
+// ConversationService manages conversations between users.
+// Direct (1:1) conversations are idempotent — creating one that already
+// exists returns the existing conversation rather than a duplicate.
+service ConversationService {
+  // Creates a new conversation. For direct (1:1) conversations, returns
+  // the existing conversation if one already exists between the two users.
+  rpc CreateConversation(CreateConversationRequest) returns (CreateConversationResponse);
+
+  // Lists all conversations for the authenticated user.
+  rpc ListConversations(ListConversationsRequest) returns (ListConversationsResponse);
+
+  // Gets the members of a specific conversation.
+  rpc GetConversationMembers(GetConversationMembersRequest) returns (GetConversationMembersResponse);
+}
+
+message CreateConversationRequest {
+  // Conversation type: "direct" for 1:1 or "group" for multi-party.
+  string type = 1;
+  // User IDs of the members to include (must include the other party,
+  // the authenticated user is added automatically).
+  repeated string member_ids = 2;
+}
+
+message CreateConversationResponse {
+  string conversation_id = 1;
+  string type = 2;
+  // True when an existing direct conversation was returned instead of
+  // creating a new one (idempotent behaviour).
+  bool already_existed = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message ListConversationsRequest {
+  int32 limit = 1;   // max items; 0 defaults to 50
+  int32 offset = 2;  // pagination offset
+}
+
+message ListConversationsResponse {
+  repeated ConversationInfo conversations = 1;
+}
+
+message ConversationInfo {
+  string conversation_id = 1;
+  string type = 2;
+  google.protobuf.Timestamp created_at = 3;
+  repeated ConversationMember members = 4;
+}
+
+message GetConversationMembersRequest {
+  string conversation_id = 1;
+}
+
+message GetConversationMembersResponse {
+  repeated ConversationMember members = 1;
+}
+
+message ConversationMember {
+  string user_id = 1;
+  string display_name = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}
