@@ -7,6 +7,10 @@ option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v
 service UserService {
   rpc GetProfile(GetProfileRequest) returns (UserProfile);
   rpc UpdateProfile(UpdateProfileRequest) returns (UserProfile);
+
+  // Permanently delete the authenticated user's account and all associated data.
+  // DSGVO Art. 17 compliance. Irreversible.
+  rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
 }
 
 message GetProfileRequest {
@@ -24,4 +28,16 @@ message UserProfile {
   string display_name = 2;
   string avatar_url = 3;
   string status_message = 4;
+}
+
+// DeleteAccountRequest requires no fields — the user is identified by
+// the JWT access token in the gRPC metadata.
+message DeleteAccountRequest {}
+
+message DeleteAccountResponse {
+  bool success = 1;
+  // Approximate counts of deleted records for audit logging.
+  int32 deleted_messages = 2;
+  int32 deleted_files = 3;
+  int32 deleted_devices = 4;
 }
