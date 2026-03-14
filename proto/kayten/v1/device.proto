@@ -90,11 +90,13 @@ message FileChunk {
   int64 total_size = 4;
   string mime_type = 5;
   bytes sha256_hash = 6;
+  string conversation_id = 7;
 }
 
 message FileUploadResponse {
   string file_id = 1;
   int64 size_bytes = 2;
+  string conversation_id = 3;
 }
 
 message FileDownloadRequest {
