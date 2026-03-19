@@ -38,6 +38,8 @@ message Envelope {
     WsAuthResponse ws_auth_response = 61;
     OpkReplenishNeeded opk_replenish_needed = 62;
     DeviceRevoked device_revoked = 70;
+    GroupSenderKey group_sender_key = 80;
+    GroupMemberEvent group_member_event = 81;
     ErrorPayload error_payload = 99;
   }
 }
@@ -61,6 +63,8 @@ enum EnvelopeType {
   KEY_EXCHANGE_RESPONSE = 21;
   KEY_RATCHET_NOTIFY = 22;
   KEY_CHANGE_ALERT = 23;
+  GROUP_SENDER_KEY = 24;
+  GROUP_MEMBER_EVENT = 25;
   PRESENCE_UPDATE = 30;
   SYNC_REQUEST = 40;
   SYNC_RESPONSE = 41;
@@ -188,6 +192,20 @@ message OpkReplenishNeeded {
 message DeviceRevoked {
   string device_id = 1;
   string reason = 2;
+}
+
+message GroupSenderKey {
+  string conversation_id = 1;
+  bytes sender_key = 2;         // Encrypted sender key blob
+  string target_user_id = 3;    // Intended recipient (relay via 1:1)
+}
+
+message GroupMemberEvent {
+  string conversation_id = 1;
+  string user_id = 2;
+  string event_type = 3;        // "joined" or "left"
+  string display_name = 4;
+  google.protobuf.Timestamp timestamp = 5;
 }
 
 message ErrorPayload {

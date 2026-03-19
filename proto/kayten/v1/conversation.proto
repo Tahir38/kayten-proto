@@ -19,6 +19,15 @@ service ConversationService {
 
   // Gets the members of a specific conversation.
   rpc GetConversationMembers(GetConversationMembersRequest) returns (GetConversationMembersResponse);
+
+  // Adds members to an existing group conversation.
+  rpc AddGroupMembers(AddGroupMembersRequest) returns (AddGroupMembersResponse);
+
+  // Leaves a group conversation. Self-removal only; direct conversations cannot be left.
+  rpc LeaveConversation(LeaveConversationRequest) returns (LeaveConversationResponse);
+
+  // Updates group conversation metadata (title).
+  rpc UpdateConversation(UpdateConversationRequest) returns (UpdateConversationResponse);
 }
 
 message CreateConversationRequest {
@@ -27,6 +36,8 @@ message CreateConversationRequest {
   // User IDs of the members to include (must include the other party,
   // the authenticated user is added automatically).
   repeated string member_ids = 2;
+  // Optional title for group conversations.
+  string title = 3;
 }
 
 message CreateConversationResponse {
@@ -52,6 +63,31 @@ message ConversationInfo {
   string type = 2;
   google.protobuf.Timestamp created_at = 3;
   repeated ConversationMember members = 4;
+  string title = 5;
+}
+
+message AddGroupMembersRequest {
+  string conversation_id = 1;
+  repeated string member_ids = 2;
+}
+
+message AddGroupMembersResponse {
+  repeated ConversationMember added_members = 1;
+}
+
+message LeaveConversationRequest {
+  string conversation_id = 1;
+}
+
+message LeaveConversationResponse {}
+
+message UpdateConversationRequest {
+  string conversation_id = 1;
+  string title = 2;
+}
+
+message UpdateConversationResponse {
+  string title = 1;
 }
 
 message GetConversationMembersRequest {
