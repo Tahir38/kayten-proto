@@ -10,6 +10,9 @@ service ContactService {
 
   // Get the server-side salt for phone hash computation.
   rpc GetContactSalt(SaltRequest) returns (SaltResponse);
+
+  // Persist the local user's block/unblock state for a contact.
+  rpc SetBlockedStatus(SetBlockedStatusRequest) returns (SetBlockedStatusResponse);
 }
 
 message ContactDiscoveryRequest {
@@ -25,6 +28,16 @@ message ContactMatch {
   string user_id = 2;
   string display_name = 3;
   bytes ed25519_pub = 4;
+  bool is_blocked = 5;
+}
+
+message SetBlockedStatusRequest {
+  string user_id = 1;
+  bool blocked = 2;
+}
+
+message SetBlockedStatusResponse {
+  bool success = 1;
 }
 
 message SaltRequest {}
