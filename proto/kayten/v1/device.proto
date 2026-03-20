@@ -5,6 +5,9 @@ package kayten.v1;
 option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
 
 service DeviceService {
+  // Register or replace the device identity key material after HSM setup.
+  rpc RegisterIdentityKey(RegisterIdentityKeyRequest) returns (RegisterIdentityKeyResponse);
+
   // Upload signed prekeys (SPK + OPK batch).
   rpc UploadPrekeys(UploadPrekeysRequest) returns (UploadPrekeysResponse);
 
@@ -32,6 +35,17 @@ message Prekey {
   bytes ecdh_pub = 2;
   bytes signature = 3;
   bool is_one_time = 4;
+}
+
+message RegisterIdentityKeyRequest {
+  string device_id = 1;
+  bytes ed25519_pub = 2;
+  bytes ecdh_pub = 3;
+  bytes signature = 4;
+}
+
+message RegisterIdentityKeyResponse {
+  bool success = 1;
 }
 
 message UploadPrekeysRequest {
