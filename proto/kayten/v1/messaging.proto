@@ -45,6 +45,7 @@ message Envelope {
     AddReaction add_reaction = 84;
     RemoveReaction remove_reaction = 85;
     MessageEvent message_event = 86;
+    SetConversationTtl set_conversation_ttl = 87;
     ErrorPayload error_payload = 99;
   }
 }
@@ -74,6 +75,7 @@ enum EnvelopeType {
   DELETE_MESSAGE = 27;
   ADD_REACTION = 28;
   REMOVE_REACTION = 29;
+  SET_CONVERSATION_TTL = 35;
   PRESENCE_UPDATE = 30;
   SYNC_REQUEST = 40;
   SYNC_RESPONSE = 41;
@@ -99,6 +101,8 @@ message SendMessage {
   int32 ratchet_seq = 11;
   // Reply threading: ID of the message being replied to.
   string reply_to_message_id = 12;
+  int32 ttl_seconds = 13;
+  bool is_view_once = 14;
 }
 
 message ReceiveMessage {
@@ -267,6 +271,11 @@ message MessageEvent {
   // delete: (empty)
   // add_reaction/remove_reaction: reaction string
   bytes payload_data = 8;
+}
+
+message SetConversationTtl {
+  string conversation_id = 1;
+  int32 ttl_seconds = 2;  // 0 = disabled
 }
 
 message ErrorPayload {
