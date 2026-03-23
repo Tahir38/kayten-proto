@@ -11,6 +11,10 @@ service UserService {
   // Permanently delete the authenticated user's account and all associated data.
   // DSGVO Art. 17 compliance. Irreversible.
   rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
+
+  // WP-BE-03: Privacy visibility settings
+  rpc GetPrivacySettings(GetPrivacySettingsRequest) returns (PrivacySettings);
+  rpc UpdatePrivacySettings(UpdatePrivacySettingsRequest) returns (PrivacySettings);
 }
 
 message GetProfileRequest {
@@ -40,4 +44,25 @@ message DeleteAccountResponse {
   int32 deleted_messages = 2;
   int32 deleted_files = 3;
   int32 deleted_devices = 4;
+}
+
+// WP-BE-03: Privacy visibility settings
+
+message GetPrivacySettingsRequest {}
+
+message UpdatePrivacySettingsRequest {
+  // Visibility scopes: "everyone", "contacts", "nobody"
+  string last_seen_visibility = 1;
+  string online_visibility = 2;
+  string profile_photo_visibility = 3;
+  bool read_receipts_enabled = 4;
+  bool typing_indicators_enabled = 5;
+}
+
+message PrivacySettings {
+  string last_seen_visibility = 1;
+  string online_visibility = 2;
+  string profile_photo_visibility = 3;
+  bool read_receipts_enabled = 4;
+  bool typing_indicators_enabled = 5;
 }
