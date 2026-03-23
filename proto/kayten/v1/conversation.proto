@@ -28,6 +28,16 @@ service ConversationService {
 
   // Updates group conversation metadata (title).
   rpc UpdateConversation(UpdateConversationRequest) returns (UpdateConversationResponse);
+
+  // WP-BE-04: Advanced group administration
+  // Promote or demote a member's role (admin only).
+  rpc SetMemberRole(SetMemberRoleRequest) returns (SetMemberRoleResponse);
+  // Remove a member from a group conversation (admin only).
+  rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
+  // Create an invite link for a group conversation (admin only).
+  rpc CreateInviteLink(CreateInviteLinkRequest) returns (CreateInviteLinkResponse);
+  // Join a group conversation via invite link.
+  rpc JoinViaInvite(JoinViaInviteRequest) returns (JoinViaInviteResponse);
 }
 
 message CreateConversationRequest {
@@ -102,4 +112,41 @@ message ConversationMember {
   string user_id = 1;
   string display_name = 2;
   google.protobuf.Timestamp joined_at = 3;
+  string role = 4;  // "admin" or "member"
+}
+
+// WP-BE-04: Advanced group administration messages
+
+message SetMemberRoleRequest {
+  string conversation_id = 1;
+  string user_id = 2;      // target member
+  string role = 3;          // "admin" or "member"
+}
+
+message SetMemberRoleResponse {}
+
+message RemoveMemberRequest {
+  string conversation_id = 1;
+  string user_id = 2;      // member to remove
+}
+
+message RemoveMemberResponse {}
+
+message CreateInviteLinkRequest {
+  string conversation_id = 1;
+  int32 max_uses = 2;                        // 0 = unlimited
+  google.protobuf.Timestamp expires_at = 3;  // optional expiry
+}
+
+message CreateInviteLinkResponse {
+  string invite_code = 1;
+  string invite_url = 2;   // e.g. "kayten://join/{invite_code}"
+}
+
+message JoinViaInviteRequest {
+  string invite_code = 1;
+}
+
+message JoinViaInviteResponse {
+  string conversation_id = 1;
 }
