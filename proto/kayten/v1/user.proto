@@ -15,6 +15,10 @@ service UserService {
   // WP-BE-03: Privacy visibility settings
   rpc GetPrivacySettings(GetPrivacySettingsRequest) returns (PrivacySettings);
   rpc UpdatePrivacySettings(UpdatePrivacySettingsRequest) returns (PrivacySettings);
+
+  // WP-BE-06: Data export (GDPR Art. 20)
+  rpc RequestDataExport(RequestDataExportRequest) returns (RequestDataExportResponse);
+  rpc GetDataExportStatus(GetDataExportStatusRequest) returns (DataExportStatus);
 }
 
 message GetProfileRequest {
@@ -65,4 +69,23 @@ message PrivacySettings {
   string profile_photo_visibility = 3;
   bool read_receipts_enabled = 4;
   bool typing_indicators_enabled = 5;
+}
+
+// WP-BE-06: Data export
+
+message RequestDataExportRequest {}
+
+message RequestDataExportResponse {
+  string export_id = 1;
+  string status = 2;  // "pending"
+}
+
+message GetDataExportStatusRequest {
+  string export_id = 1;
+}
+
+message DataExportStatus {
+  string export_id = 1;
+  string status = 2;       // "pending", "processing", "ready", "expired", "failed"
+  string download_url = 3; // presigned URL when status = "ready"
 }
