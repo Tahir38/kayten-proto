@@ -180,6 +180,8 @@ message PresenceUpdate {
 
 message SyncRequest {
   int64 last_server_seq = 1;
+  // Last event server_seq the client has seen (0 = first sync, return all events).
+  int64 last_event_seq = 2;
 }
 
 message SyncResponse {
