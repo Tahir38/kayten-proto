@@ -103,6 +103,8 @@ message SendMessage {
   string reply_to_message_id = 12;
   int32 ttl_seconds = 13;
   bool is_view_once = 14;
+  bytes tag_inner = 15;
+  bytes tag_outer = 16;
 }
 
 message ReceiveMessage {
@@ -126,6 +128,8 @@ message ReceiveMessage {
   bool is_deleted_for_everyone = 17;
   int32 ttl_seconds = 18;
   bool is_view_once = 19;
+  bytes tag_inner = 20;
+  bytes tag_outer = 21;
 }
 
 message MessageAck {
