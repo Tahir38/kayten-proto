@@ -250,6 +250,8 @@ message EditMessage {
   int32 edit_seq = 6;
   bytes new_ratchet_pub = 7;
   int32 new_ratchet_seq = 8;
+  bytes new_tag_inner = 9;  // Doppel-AES inner GCM tag (16 bytes)
+  bytes new_tag_outer = 10; // Doppel-AES outer GCM tag (16 bytes)
 }
 
 // Delete a message for all participants.
