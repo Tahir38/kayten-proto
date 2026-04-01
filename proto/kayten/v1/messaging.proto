@@ -157,6 +157,9 @@ message KeyExchangeRequest {
   bytes ecdh_pub = 2;
   bytes identity_pub = 3;
   bytes prekey_id_used = 4;
+  // Added for ratchet state keying: responder must know conversation and sender
+  string conversation_id = 5;
+  string sender_device_id = 6;
 }
 
 message KeyExchangeResponse {
