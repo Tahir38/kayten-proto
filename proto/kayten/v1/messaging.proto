@@ -166,6 +166,8 @@ message KeyExchangeResponse {
   string from_device_id = 1;
   bytes ecdh_pub = 2;
   bool accepted = 3;
+  // Echoed from request so initiator can look up the exact pending session.
+  string conversation_id = 4;
 }
 
 message KeyRatchetNotify {
