@@ -17,6 +17,7 @@ message CallOffer {
   string turn_username = 9;
   string turn_credential = 10;
   repeated string turn_urls = 11;
+  bytes voice_ecdh_sig = 12;       // Ed25519 signature over transcript(callId, conversationId, role, voiceMode, voiceEcdhPub)
 }
 
 message CallAnswer {
@@ -31,6 +32,7 @@ message CallAnswer {
   string turn_username = 8;
   string turn_credential = 9;
   repeated string turn_urls = 10;
+  bytes voice_ecdh_sig = 11;       // Ed25519 signature over transcript(callId, conversationId, role, voiceMode, voiceEcdhPub)
 }
 
 message CallIceCandidate {
