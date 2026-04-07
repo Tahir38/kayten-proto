@@ -87,6 +87,34 @@ enum EnvelopeType {
   ERROR = 99;
 }
 
+// PrekeyBootstrap carries the metadata a responder needs to derive a fresh
+// Double Ratchet session from the very first message in a conversation,
+// without requiring a prior KEY_EXCHANGE_REQUEST round-trip.
+//
+// When a SendMessage envelope includes this field, the responder treats the
+// message as a prekey-bootstrap and derives initial state from these fields
+// before decrypting `ciphertext`.
+//
+// The server relays this field transparently — it does NOT validate or
+// inspect any contents.
+message PrekeyBootstrap {
+  // Initiator's ephemeral ECDH public key.
+  bytes initiator_ephemeral = 1;
+
+  // Initiator's Ed25519 identity public key.
+  bytes initiator_identity_pub = 2;
+
+  // Identifier of the consumed one-time prekey, if any. 0 = no OPK.
+  uint32 consumed_opk_id = 3;
+
+  // Identifier of the signed prekey used for X3DH (for ratchet binding).
+  uint32 signed_prekey_id = 4;
+
+  // Optional sender device id, in case the message router needs it before
+  // the responder has a contact entry.
+  string sender_device_id = 5;
+}
+
 message SendMessage {
   string conversation_id = 1;
   string recipient_id = 2;
@@ -105,6 +133,11 @@ message SendMessage {
   bool is_view_once = 14;
   bytes tag_inner = 15;
   bytes tag_outer = 16;
+  // Optional prekey bootstrap metadata. When present, this is the first
+  // message in a new conversation and the responder MUST derive session
+  // state from these fields before decrypting `ciphertext`.
+  // Server relays this field transparently.
+  PrekeyBootstrap prekey_bootstrap = 20;
 }
 
 message ReceiveMessage {
@@ -130,6 +163,10 @@ message ReceiveMessage {
   bool is_view_once = 19;
   bytes tag_inner = 20;
   bytes tag_outer = 21;
+  // Mirrors SendMessage.prekey_bootstrap. Present when this message is the
+  // first in a conversation and the responder must derive session state
+  // from the bootstrap before decrypting `ciphertext`.
+  PrekeyBootstrap prekey_bootstrap = 22;
 }
 
 message MessageAck {
