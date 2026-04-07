@@ -9,6 +9,13 @@ import "kayten/v1/calling.proto";
 
 // Envelope wraps all WebSocket messages between client and server.
 message Envelope {
+  // Reserved: oneof payload fields for the obsolete polling-based
+  // KEY_EXCHANGE_REQUEST / KEY_EXCHANGE_RESPONSE bootstrap flow
+  // (cross-repo-production-spec-v1 §3.1). First-message bootstrap now
+  // travels in SendMessage.prekey_bootstrap.
+  reserved 30, 31;
+  reserved "key_exchange_request", "key_exchange_response";
+
   EnvelopeType type = 1;
   string id = 2;
   google.protobuf.Timestamp timestamp = 3;
@@ -27,8 +34,6 @@ message Envelope {
     CallRinging call_ringing = 24;
     CallDtlsFingerprint call_dtls_fingerprint = 25;
     CallVoiceRekey call_voice_rekey = 26;
-    KeyExchangeRequest key_exchange_request = 30;
-    KeyExchangeResponse key_exchange_response = 31;
     KeyRatchetNotify key_ratchet_notify = 32;
     KeyChangeAlert key_change_alert = 33;
     PresenceUpdate presence_update = 40;
@@ -51,6 +56,12 @@ message Envelope {
 }
 
 enum EnvelopeType {
+  // Reserved: the obsolete polling-based bootstrap envelope types.
+  // First-message bootstrap now travels in SendMessage.prekey_bootstrap
+  // (cross-repo-production-spec-v1 §3.1).
+  reserved 20, 21;
+  reserved "KEY_EXCHANGE_REQUEST", "KEY_EXCHANGE_RESPONSE";
+
   ENVELOPE_TYPE_UNSPECIFIED = 0;
   SEND_MESSAGE = 1;
   RECEIVE_MESSAGE = 2;
@@ -65,8 +76,6 @@ enum EnvelopeType {
   CALL_RINGING = 14;
   CALL_DTLS_FINGERPRINT = 15;
   CALL_VOICE_REKEY = 16;
-  KEY_EXCHANGE_REQUEST = 20;
-  KEY_EXCHANGE_RESPONSE = 21;
   KEY_RATCHET_NOTIFY = 22;
   KEY_CHANGE_ALERT = 23;
   GROUP_SENDER_KEY = 24;
@@ -189,23 +198,10 @@ message TypingIndicator {
   bool is_typing = 2;
 }
 
-message KeyExchangeRequest {
-  string target_device_id = 1;
-  bytes ecdh_pub = 2;
-  bytes identity_pub = 3;
-  bytes prekey_id_used = 4;
-  // Added for ratchet state keying: responder must know conversation and sender
-  string conversation_id = 5;
-  string sender_device_id = 6;
-}
-
-message KeyExchangeResponse {
-  string from_device_id = 1;
-  bytes ecdh_pub = 2;
-  bool accepted = 3;
-  // Echoed from request so initiator can look up the exact pending session.
-  string conversation_id = 4;
-}
+// KeyExchangeRequest and KeyExchangeResponse have been removed — the old
+// polling-based bootstrap flow is superseded by SendMessage.prekey_bootstrap
+// (cross-repo-production-spec-v1 §3.1). Their Envelope oneof field numbers
+// (30, 31) and EnvelopeType enum values (20, 21) are reserved above.
 
 message KeyRatchetNotify {
   string conversation_id = 1;
