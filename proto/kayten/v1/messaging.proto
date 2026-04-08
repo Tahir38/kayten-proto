@@ -261,10 +261,93 @@ message DeviceRevoked {
   string reason = 2;
 }
 
+// GroupSenderKey carries a per-recipient, ratchet-protected distribution
+// of a group sender-key seed to one member of a group conversation.
+//
+// Under the SKDM model (group-file-skdm-cross-repo-spec-v1 §2.1), the
+// sender serializes an SkdmPayload, encrypts it through the existing
+// 1:1 ratchet session to the target recipient, and carries the resulting
+// ciphertext + ratchet metadata in this envelope. The server relays the
+// envelope unmodified — it never sees sender-key material in plaintext.
+//
+// This message is NOT a device-bound wrapped key blob. The pre-SKDM
+// `sender_key = 2` field has been removed; its field number is reserved
+// to prevent reuse.
 message GroupSenderKey {
+  // Group conversation this sender key belongs to.
   string conversation_id = 1;
-  bytes sender_key = 2;         // Encrypted sender key blob
-  string target_user_id = 3;    // Intended recipient (relay via 1:1)
+
+  // Reserved: the pre-SKDM `sender_key` blob (device-bound wrapped key
+  // transport). Removed per group-file-skdm-cross-repo-spec-v1 §2.1.
+  reserved 2;
+  reserved "sender_key";
+
+  // Single recipient of this per-member fanout envelope. The sender
+  // emits one GroupSenderKey envelope per target member, each encrypted
+  // through the 1:1 session to that member.
+  string target_user_id = 3;
+
+  // Sender identity — carried in plaintext at the envelope layer so the
+  // recipient can look up the correct 1:1 ratchet session before
+  // attempting to decrypt `ciphertext`.
+  string sender_user_id = 4;
+  string sender_device_id = 5;
+
+  // 1:1-session ciphertext of the serialized SkdmPayload for this
+  // recipient. Decrypted with the recipient's existing ratchet state
+  // against `sender_user_id`/`sender_device_id`.
+  bytes ciphertext = 6;
+
+  // AES-GCM IV used to encrypt `ciphertext`.
+  bytes iv = 7;
+
+  // Ed25519 signature over the distribution envelope, verifiable
+  // against the sender's registered identity key.
+  bytes signature = 8;
+
+  // Ratchet metadata required to advance the recipient's 1:1 ratchet
+  // state and decrypt `ciphertext`.
+  bytes ratchet_pub = 9;
+  int32 ratchet_seq = 10;
+
+  // Doppel-AES inner/outer GCM authentication tags, matching the same
+  // scheme used for regular SendMessage envelopes.
+  bytes tag_inner = 11;
+  bytes tag_outer = 12;
+}
+
+// SkdmPayload is the plaintext carried inside GroupSenderKey.ciphertext.
+// It is never sent on the wire unencrypted — it is serialized, then
+// encrypted through the sender's 1:1 ratchet session to each recipient,
+// and the resulting bytes are carried in GroupSenderKey.ciphertext.
+//
+// The seeds are raw key material the recipient stores locally (for
+// example via wrap_storage_root_key) and uses as HKDF input for the
+// group ratchet chains that decrypt subsequent group messages from this
+// sender on this chain.
+message SkdmPayload {
+  // Group conversation this sender key belongs to.
+  string conversation_id = 1;
+
+  // Monotonically increasing chain id. A sender rotates chain_id when
+  // starting a new group sender-key chain (for example after a group
+  // membership change or a forced rekey).
+  uint32 chain_id = 2;
+
+  // Inner seed — exactly 32 bytes. Protobuf cannot enforce the exact
+  // length at the schema level; the application layer MUST validate
+  // `len(inner_seed) == 32` before use.
+  bytes inner_seed = 3;
+
+  // Outer seed — exactly 32 bytes. Protobuf cannot enforce the exact
+  // length at the schema level; the application layer MUST validate
+  // `len(outer_seed) == 32` before use.
+  bytes outer_seed = 4;
+
+  // Sender's Ed25519 identity public key, echoed so the recipient can
+  // bind the seeds to the expected signing identity independently of
+  // the transport-layer 1:1 session lookup.
+  bytes signing_pub = 5;
 }
 
 message GroupMemberEvent {
