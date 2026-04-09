@@ -8,7 +8,14 @@ service AuthService {
   // Request SMS verification code for phone number.
   rpc RequestVerification(VerificationRequest) returns (VerificationResponse);
 
-  // Verify SMS code and register device. Returns JWT tokens.
+  // Verify SMS code and register the device record. Returns JWT tokens.
+  //
+  // During pre-provision verification on a fresh real-HSM device, the caller
+  // may not yet have established cryptographic identity or a secure channel.
+  // In that phase only phone_number, code, and hsm_serial are required;
+  // identity key material and attestation fields may be empty (zero-length
+  // bytes / empty repeated field). Real identity and attestation material
+  // may be registered later after provisioning and secure-channel setup.
   rpc VerifyCode(VerifyCodeRequest) returns (AuthTokenResponse);
 
   // Refresh an expired access token using a valid refresh token.
@@ -24,16 +31,67 @@ message VerificationResponse {
   int32 retry_after_seconds = 2;
 }
 
+// VerifyCodeRequest carries the SMS verification code and device metadata.
+//
+// Field requirements depend on the device lifecycle phase:
+//
+//   Pre-provision (fresh real-HSM device, no secure channel yet):
+//     Required : phone_number, code, hsm_serial
+//     Optional : hsm_firmware_version, device_name (non-fatal when absent)
+//     May be empty: ed25519_public_key, ecdh_public_key, identity_signature,
+//                   keystore_ecdh_public_key, attestation_cert_chain
+//
+//   Post-provision (identity established, secure channel active):
+//     All fields may be populated as usual.
+//
+// For proto3 bytes fields, the canonical pre-provision empty representation
+// is zero-length bytes (the proto3 default). There is no separate nullable
+// wire-level representation; implementations must treat zero-length bytes as
+// "not yet provided." The repeated attestation_cert_chain field uses an empty
+// list to express the same semantics.
+//
+// Identity and attestation material may be registered in a later call after
+// provisioning and secure-channel establishment are complete.
 message VerifyCodeRequest {
+  // Phone number being verified. Required.
   string phone_number = 1;
+
+  // SMS verification code. Required.
   string code = 2;
+
+  // Ed25519 identity public key. May be zero-length bytes during
+  // pre-provision verification on a fresh real-HSM device; registered
+  // later after provisioning and secure-channel setup.
   bytes ed25519_public_key = 3;
+
+  // ECDH public key for key agreement. May be zero-length bytes during
+  // pre-provision verification on a fresh real-HSM device; registered
+  // later after provisioning and secure-channel setup.
   bytes ecdh_public_key = 4;
+
+  // Signature proving possession of the Ed25519 identity key. May be
+  // zero-length bytes during pre-provision verification on a fresh
+  // real-HSM device.
   bytes identity_signature = 5;
+
+  // Hardware security module serial number. Required for device
+  // identification during all verification phases.
   string hsm_serial = 6;
+
+  // HSM firmware version. Optional metadata; non-fatal when absent.
   string hsm_firmware_version = 7;
+
+  // Human-readable device name. Optional metadata; non-fatal when absent.
   string device_name = 8;
+
+  // Android Keystore / Secure Enclave ECDH public key. May be zero-length
+  // bytes during pre-provision verification on a fresh real-HSM device;
+  // registered later after provisioning and secure-channel setup.
   bytes keystore_ecdh_public_key = 9;
+
+  // Attestation certificate chain from the platform keystore. May be an
+  // empty list during pre-provision verification on a fresh real-HSM
+  // device; registered later after provisioning and secure-channel setup.
   repeated bytes attestation_cert_chain = 10;
 }
 
