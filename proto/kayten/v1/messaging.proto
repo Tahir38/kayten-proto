@@ -128,10 +128,38 @@ message SendMessage {
   string conversation_id = 1;
   string recipient_id = 2;
   string recipient_device_id = 3;
+
+  // Encrypted message body. Populated by both legacy and composite paths.
   bytes ciphertext = 4;
+
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // These fields carry the pre-composite (single-IV, single/dual-tag)
+  // crypto shape. They remain for backward compatibility with clients
+  // that have not yet adopted the 0x40 ENCRYPT_AND_SIGN_MSG composite
+  // runtime path.
+  //
+  // Sender rules during rollout:
+  //   - Legacy-only senders MAY continue populating only legacy fields.
+  //   - Composite-capable senders SHOULD dual-write both canonical
+  //     composite fields and legacy compatibility fields.
+  //   - Senders SHALL NOT populate conflicting values across legacy
+  //     and composite fields.
+  //
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+  //
+  // The server relays these fields transparently and does not interpret
+  // the crypto payload.
+
+  // Legacy single IV (pre-composite compatibility).
   bytes iv = 5;
+  // Legacy single authentication tag (pre-composite compatibility).
   bytes tag = 6;
+
+  // Ed25519 signature over the message envelope. Populated by both
+  // legacy and composite paths.
   bytes signature = 7;
+
   string msg_type = 8;
   int32 padded_size = 9;
   bytes ratchet_pub = 10;
@@ -140,8 +168,30 @@ message SendMessage {
   string reply_to_message_id = 12;
   int32 ttl_seconds = 13;
   bool is_view_once = 14;
+
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility).
   bytes tag_inner = 15;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path.
   bytes tag_outer = 16;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // These fields carry the composite crypto shape returned by the HSM
+  // ENCRYPT_AND_SIGN_MSG path. Composite-capable senders populate:
+  //   ciphertext, iv_inner, iv_outer, tag_outer, signature
+  //
+  // Receiver precedence:
+  //   1. If iv_inner / iv_outer are populated, receivers SHALL prefer
+  //      them (composite path).
+  //   2. Otherwise receivers SHALL fall back to legacy `iv`.
+  //   3. Receivers SHALL NOT ignore populated composite fields and
+  //      silently prefer legacy fields.
+
+  // Inner AES-GCM IV (composite runtime).
+  bytes iv_inner = 17;
+  // Outer AES-GCM IV (composite runtime).
+  bytes iv_outer = 18;
+
   // Optional prekey bootstrap metadata. When present, this is the first
   // message in a new conversation and the responder MUST derive session
   // state from these fields before decrypting `ciphertext`.
@@ -154,10 +204,38 @@ message ReceiveMessage {
   string conversation_id = 2;
   string sender_id = 3;
   string sender_device_id = 4;
+
+  // Encrypted message body. Populated by both legacy and composite paths.
   bytes ciphertext = 5;
+
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // These fields carry the pre-composite (single-IV, single/dual-tag)
+  // crypto shape. They remain for backward compatibility with clients
+  // that have not yet adopted the 0x40 ENCRYPT_AND_SIGN_MSG composite
+  // runtime path.
+  //
+  // Sender rules during rollout:
+  //   - Legacy-only senders MAY continue populating only legacy fields.
+  //   - Composite-capable senders SHOULD dual-write both canonical
+  //     composite fields and legacy compatibility fields.
+  //   - Senders SHALL NOT populate conflicting values across legacy
+  //     and composite fields.
+  //
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+  //
+  // The server relays these fields transparently and does not interpret
+  // the crypto payload.
+
+  // Legacy single IV (pre-composite compatibility).
   bytes iv = 6;
+  // Legacy single authentication tag (pre-composite compatibility).
   bytes tag = 7;
+
+  // Ed25519 signature over the message envelope. Populated by both
+  // legacy and composite paths.
   bytes signature = 8;
+
   string msg_type = 9;
   int32 padded_size = 10;
   bytes ratchet_pub = 11;
@@ -170,12 +248,34 @@ message ReceiveMessage {
   bool is_deleted_for_everyone = 17;
   int32 ttl_seconds = 18;
   bool is_view_once = 19;
+
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility).
   bytes tag_inner = 20;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path.
   bytes tag_outer = 21;
+
   // Mirrors SendMessage.prekey_bootstrap. Present when this message is the
   // first in a conversation and the responder must derive session state
   // from the bootstrap before decrypting `ciphertext`.
   PrekeyBootstrap prekey_bootstrap = 22;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // These fields carry the composite crypto shape returned by the HSM
+  // ENCRYPT_AND_SIGN_MSG path. Composite-capable senders populate:
+  //   ciphertext, iv_inner, iv_outer, tag_outer, signature
+  //
+  // Receiver precedence:
+  //   1. If iv_inner / iv_outer are populated, receivers SHALL prefer
+  //      them (composite path).
+  //   2. Otherwise receivers SHALL fall back to legacy `iv`.
+  //   3. Receivers SHALL NOT ignore populated composite fields and
+  //      silently prefer legacy fields.
+
+  // Inner AES-GCM IV (composite runtime).
+  bytes iv_inner = 23;
+  // Outer AES-GCM IV (composite runtime).
+  bytes iv_outer = 24;
 }
 
 message MessageAck {
@@ -298,11 +398,29 @@ message GroupSenderKey {
   // against `sender_user_id`/`sender_device_id`.
   bytes ciphertext = 6;
 
-  // AES-GCM IV used to encrypt `ciphertext`.
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // These fields carry the pre-composite (single-IV) crypto shape for
+  // the 1:1 ratchet protection of the SKDM distribution. They remain
+  // for backward compatibility with clients that have not yet adopted
+  // the composite runtime path.
+  //
+  // Sender rules during rollout:
+  //   - Legacy-only senders MAY continue populating only legacy fields.
+  //   - Composite-capable senders SHOULD dual-write both canonical
+  //     composite fields and legacy compatibility fields if older
+  //     recipients still exist.
+  //   - Senders SHALL NOT populate conflicting values across legacy
+  //     and composite fields.
+  //
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+
+  // Legacy single IV for the 1:1 SKDM encryption (pre-composite compatibility).
   bytes iv = 7;
 
   // Ed25519 signature over the distribution envelope, verifiable
-  // against the sender's registered identity key.
+  // against the sender's registered identity key. Populated by both
+  // legacy and composite paths.
   bytes signature = 8;
 
   // Ratchet metadata required to advance the recipient's 1:1 ratchet
@@ -310,10 +428,28 @@ message GroupSenderKey {
   bytes ratchet_pub = 9;
   int32 ratchet_seq = 10;
 
-  // Doppel-AES inner/outer GCM authentication tags, matching the same
-  // scheme used for regular SendMessage envelopes.
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility).
   bytes tag_inner = 11;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path.
   bytes tag_outer = 12;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // These fields carry the composite crypto shape for the 1:1-protected
+  // SKDM distribution. Composite-capable senders populate:
+  //   ciphertext, iv_inner, iv_outer, tag_outer, signature
+  //
+  // Receiver precedence:
+  //   1. If iv_inner / iv_outer are populated, receivers SHALL prefer
+  //      them (composite path).
+  //   2. Otherwise receivers SHALL fall back to legacy `iv`.
+  //   3. Receivers SHALL NOT ignore populated composite fields and
+  //      silently prefer legacy fields.
+
+  // Inner AES-GCM IV (composite runtime).
+  bytes iv_inner = 13;
+  // Outer AES-GCM IV (composite runtime).
+  bytes iv_outer = 14;
 }
 
 // SkdmPayload is the plaintext carried inside GroupSenderKey.ciphertext.
@@ -359,17 +495,67 @@ message GroupMemberEvent {
 }
 
 // Edit a previously sent message. Requires new ciphertext (ratchet advance).
+//
+// Rollout behavior:
+//   - Legacy-only senders MAY populate only legacy fields and MAY leave
+//     `new_signature` empty.
+//   - Composite-capable senders MUST populate:
+//       new_ciphertext, new_iv_inner, new_iv_outer, new_tag_outer,
+//       new_signature
+//     and SHOULD also dual-write legacy compatibility fields.
+//   - Senders SHALL NOT populate conflicting values across legacy
+//     and composite fields.
+//   - Receivers MUST treat an edit as composite when `new_iv_inner`
+//     and `new_iv_outer` are both populated.
+//   - Composite edit receivers MUST require `new_signature`. If
+//     composite fields are present but `new_signature` is empty,
+//     malformed, or fails verification, receivers MUST reject the edit.
+//   - Receivers SHALL NOT ignore populated composite fields and
+//     silently prefer legacy fields.
+//
+// The server relays these fields transparently and does not interpret
+// the crypto payload.
 message EditMessage {
   string message_id = 1;
   string conversation_id = 2;
+
+  // Encrypted replacement body. Populated by both legacy and composite paths.
   bytes new_ciphertext = 3;
+
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // Pre-composite crypto shape. Kept for backward compatibility.
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+
+  // Legacy single IV (pre-composite compatibility).
   bytes new_iv = 4;
+  // Legacy single authentication tag (pre-composite compatibility).
   bytes new_tag = 5;
+
   int32 edit_seq = 6;
   bytes new_ratchet_pub = 7;
   int32 new_ratchet_seq = 8;
-  bytes new_tag_inner = 9;  // Doppel-AES inner GCM tag (16 bytes)
-  bytes new_tag_outer = 10; // Doppel-AES outer GCM tag (16 bytes)
+
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility, 16 bytes).
+  bytes new_tag_inner = 9;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path (16 bytes).
+  bytes new_tag_outer = 10;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // Composite-capable senders MUST populate:
+  //   new_ciphertext, new_iv_inner, new_iv_outer, new_tag_outer,
+  //   new_signature
+
+  // Inner AES-GCM IV (composite runtime).
+  bytes new_iv_inner = 11;
+  // Outer AES-GCM IV (composite runtime).
+  bytes new_iv_outer = 12;
+  // Ed25519 signature over the new composite edit payload. Composite
+  // edit receivers MUST require this field; if it is empty, malformed,
+  // or fails verification the edit MUST be rejected.
+  // Legacy edit senders MAY leave this field empty.
+  bytes new_signature = 13;
 }
 
 // Delete a message for all participants.
