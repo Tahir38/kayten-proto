@@ -177,19 +177,29 @@ message SendMessage {
 
   // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
   // These fields carry the composite crypto shape returned by the HSM
-  // ENCRYPT_AND_SIGN_MSG path. Composite-capable senders populate:
+  // ENCRYPT_AND_SIGN_MSG path. `iv_inner` and `iv_outer` are authoritative
+  // sender-produced composite AES-GCM IVs — they are NOT transport-only
+  // hints, placeholders, or values that may be guessed, derived, or
+  // locally synthesized by receivers. Composite-capable senders populate:
   //   ciphertext, iv_inner, iv_outer, tag_outer, signature
   //
+  // The server relays these fields transparently and does not interpret,
+  // rewrite, or synthesize any of the crypto payload or its metadata.
+  //
   // Receiver precedence:
-  //   1. If iv_inner / iv_outer are populated, receivers SHALL prefer
-  //      them (composite path).
-  //   2. Otherwise receivers SHALL fall back to legacy `iv`.
+  //   1. If iv_inner / iv_outer are populated, receivers MUST use those
+  //      populated values directly as the authoritative composite IVs
+  //      (composite path). Receivers MUST NOT derive, guess, or locally
+  //      synthesize iv_inner / iv_outer when they are present on the wire.
+  //   2. Otherwise (both absent) receivers SHALL fall back to legacy `iv`.
   //   3. Receivers SHALL NOT ignore populated composite fields and
   //      silently prefer legacy fields.
 
-  // Inner AES-GCM IV (composite runtime).
+  // Authoritative inner AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
   bytes iv_inner = 17;
-  // Outer AES-GCM IV (composite runtime).
+  // Authoritative outer AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
   bytes iv_outer = 18;
 
   // Optional prekey bootstrap metadata. When present, this is the first
@@ -262,19 +272,29 @@ message ReceiveMessage {
 
   // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
   // These fields carry the composite crypto shape returned by the HSM
-  // ENCRYPT_AND_SIGN_MSG path. Composite-capable senders populate:
+  // ENCRYPT_AND_SIGN_MSG path. `iv_inner` and `iv_outer` are authoritative
+  // sender-produced composite AES-GCM IVs — they are NOT transport-only
+  // hints, placeholders, or values that may be guessed, derived, or
+  // locally synthesized by receivers. Composite-capable senders populate:
   //   ciphertext, iv_inner, iv_outer, tag_outer, signature
   //
+  // The server relays these fields transparently and does not interpret,
+  // rewrite, or synthesize any of the crypto payload or its metadata.
+  //
   // Receiver precedence:
-  //   1. If iv_inner / iv_outer are populated, receivers SHALL prefer
-  //      them (composite path).
-  //   2. Otherwise receivers SHALL fall back to legacy `iv`.
+  //   1. If iv_inner / iv_outer are populated, receivers MUST use those
+  //      populated values directly as the authoritative composite IVs
+  //      (composite path). Receivers MUST NOT derive, guess, or locally
+  //      synthesize iv_inner / iv_outer when they are present on the wire.
+  //   2. Otherwise (both absent) receivers SHALL fall back to legacy `iv`.
   //   3. Receivers SHALL NOT ignore populated composite fields and
   //      silently prefer legacy fields.
 
-  // Inner AES-GCM IV (composite runtime).
+  // Authoritative inner AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
   bytes iv_inner = 23;
-  // Outer AES-GCM IV (composite runtime).
+  // Authoritative outer AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
   bytes iv_outer = 24;
 }
 
@@ -562,13 +582,27 @@ message EditMessage {
   bytes new_tag_outer = 10;
 
   // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
-  // Composite-capable senders MUST populate:
+  // `new_iv_inner` and `new_iv_outer` are authoritative sender-produced
+  // composite AES-GCM IVs for the edit payload — they are NOT transport-
+  // only hints, placeholders, or values that may be guessed, derived, or
+  // locally synthesized by receivers. Composite-capable senders MUST
+  // populate:
   //   new_ciphertext, new_iv_inner, new_iv_outer, new_tag_outer,
   //   new_signature
+  //
+  // The server relays these fields transparently and does not interpret,
+  // rewrite, or synthesize any of the crypto payload or its metadata.
+  // Receivers MUST use populated composite IVs directly and MUST NOT
+  // derive, guess, or locally synthesize them when they are present on
+  // the wire.
 
-  // Inner AES-GCM IV (composite runtime).
+  // Authoritative inner AES-GCM IV produced by the sender for the edit
+  // payload (composite runtime). Receivers MUST use this value directly
+  // when present.
   bytes new_iv_inner = 11;
-  // Outer AES-GCM IV (composite runtime).
+  // Authoritative outer AES-GCM IV produced by the sender for the edit
+  // payload (composite runtime). Receivers MUST use this value directly
+  // when present.
   bytes new_iv_outer = 12;
   // Ed25519 signature over the canonical composite edit transcript.
   // This is NOT an arbitrary repo-local signature; senders MUST sign
