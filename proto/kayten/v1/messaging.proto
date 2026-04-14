@@ -513,6 +513,19 @@ message GroupMemberEvent {
 //   - Receivers SHALL NOT ignore populated composite fields and
 //     silently prefer legacy fields.
 //
+// Hardened edit replay contract:
+//   - An edit does NOT advance the hardened local-history replay chain.
+//   - On historical reopen, receivers MUST replay the edit using the
+//     original message row's replay coordinates (ratchet_pub / ratchet_seq
+//     captured at the time the original message was first decrypted).
+//   - `new_ratchet_pub` / `new_ratchet_seq` on this message are legacy
+//     compatibility data and are NOT authoritative replay metadata for
+//     hardened historical reopen.
+//   - If product later requires edit-specific authoritative replay
+//     coordinates (e.g. `edit_ratchet_epoch`, `edit_message_counter`),
+//     that is a separate additive proto delta — it is intentionally
+//     NOT included here.
+//
 // The server relays these fields transparently and does not interpret
 // the crypto payload.
 message EditMessage {
@@ -533,6 +546,12 @@ message EditMessage {
   bytes new_tag = 5;
 
   int32 edit_seq = 6;
+
+  // Legacy compatibility ratchet coordinates. These are NOT authoritative
+  // replay metadata for hardened historical reopen — hardened edit replay
+  // reuses the original message row's ratchet coordinates captured when
+  // the original message was first decrypted. See the message-level
+  // "Hardened edit replay contract" comment above.
   bytes new_ratchet_pub = 7;
   int32 new_ratchet_seq = 8;
 
@@ -551,9 +570,24 @@ message EditMessage {
   bytes new_iv_inner = 11;
   // Outer AES-GCM IV (composite runtime).
   bytes new_iv_outer = 12;
-  // Ed25519 signature over the new composite edit payload. Composite
-  // edit receivers MUST require this field; if it is empty, malformed,
-  // or fails verification the edit MUST be rejected.
+  // Ed25519 signature over the canonical composite edit transcript.
+  // This is NOT an arbitrary repo-local signature; senders MUST sign
+  // the following transcript in this exact order:
+  //
+  //   1. domain prefix: ASCII "kayten-edit-v1"
+  //   2. message_id
+  //   3. conversation_id
+  //   4. edit_seq
+  //   5. new_ratchet_seq
+  //   6. new_ciphertext
+  //   7. new_iv_inner
+  //   8. new_iv_outer
+  //   9. new_tag_outer
+  //
+  // Composite edit receivers MUST require this field and verify it
+  // against the reconstructed transcript using the sender's registered
+  // Ed25519 identity key. If it is empty, malformed, or fails
+  // verification the edit MUST be rejected.
   // Legacy edit senders MAY leave this field empty.
   bytes new_signature = 13;
 }
