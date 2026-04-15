@@ -124,6 +124,79 @@ message PrekeyBootstrap {
   string sender_device_id = 5;
 }
 
+// ── Canonical composite messaging contract ─────────────────────────────
+// The following contract applies to both `SendMessage` and
+// `ReceiveMessage` composite-path fields and is the only production
+// interpretation.
+//
+// Canonical composite signature transcript (the bytes `signature` MUST
+// cover, reconstructed identically by sender and receiver):
+//
+//   transcript = SHA-256( iv_inner || ciphertext || tag_outer || aad )
+//   signature  = Ed25519(sender_identity_priv, transcript)
+//
+// Canonical messaging AAD — frozen, versioned, shared by sender and
+// receiver. Receivers MUST reconstruct AAD using exactly the same inputs
+// and MUST NOT treat AAD shape as repo-local guesswork:
+//
+//   aad      = SHA-256(preimage)
+//   preimage = utf8(conversation_id)
+//           || utf8(sender_device_id)
+//           || msg_type_byte:u8
+//           || ratchet_seq:u32_be
+//           || utf8("kayten-msg-aad-v1")
+//
+// `msg_type_byte:u8` is exactly one byte. It is NOT the UTF-8 of the
+// `string msg_type` wire field; the wire string is product/display
+// metadata, while AAD is bound to the canonical single-byte code
+// frozen below. This table is the authoritative, frozen proto contract
+// for the AAD byte under "kayten-msg-aad-v1". It MIRRORS the existing
+// `MessageType` ordinal already used by the live sender/receiver — it
+// is not a new contract:
+//
+//   MessageType   wire string (typical)    msg_type_byte (hex)
+//   ────────────────────────────────────────────────────────────
+//   text          "text" or ""             0x00
+//   image         "image"                  0x01
+//   video         "video"                  0x02
+//   audio         "audio"                  0x03
+//   voiceNote     "voiceNote"              0x04
+//   file          "file"                   0x05
+//   location      "location"               0x06
+//
+// Bytes >= 0x07 are reserved for future versioned extension and MUST
+// NOT be emitted under "kayten-msg-aad-v1". Adding a new
+// `msg_type_byte` value, removing one, or remapping any existing
+// MessageType to a different byte REQUIRES a new explicit AAD version
+// suffix (e.g. "kayten-msg-aad-v2") and a coordinated cross-repo
+// rollout. The wire `string msg_type` may also evolve, but ANY change
+// to the byte mapping above is a versioned contract change, not a
+// silent rename.
+//
+// The trailing domain-version tag "kayten-msg-aad-v1" is the authoritative
+// AAD version identifier. Any future AAD schema change REQUIRES a new
+// explicit version suffix (e.g. "kayten-msg-aad-v2") and a coordinated
+// cross-repo rollout — receivers MUST NOT accept silent AAD changes.
+//
+// Composite verification expectations (receivers MUST enforce all):
+//   1. reconstruct `aad` from the same inputs the sender used;
+//   2. reconstruct `transcript` from `iv_inner || ciphertext || tag_outer
+//      || aad`;
+//   3. verify `signature` against the sender's trusted identity key for
+//      that transcript (the same sender device identity used for trust
+//      lookup SHALL be used for signature verification);
+//   4. decrypt with the authoritative wire-provided `iv_inner` /
+//      `iv_outer` — never guess, reconstruct, or locally synthesize IVs.
+//
+// Proto + server relay contract:
+//   - The server is an OPAQUE, byte-preserving relay for every composite
+//     crypto field (`ciphertext`, `iv_inner`, `iv_outer`, `tag_outer`,
+//     `signature`, and on edits: `new_ciphertext`, `new_iv_inner`,
+//     `new_iv_outer`, `new_tag_outer`, `new_signature`).
+//   - The server SHALL NOT interpret, normalize, synthesize, or repair
+//     any crypto field — it is not a crypto-field repair layer.
+//   - Delete/tombstone paths SHALL clear both legacy and composite
+//     payload fields together.
 message SendMessage {
   string conversation_id = 1;
   string recipient_id = 2;
@@ -156,10 +229,21 @@ message SendMessage {
   // Legacy single authentication tag (pre-composite compatibility).
   bytes tag = 6;
 
-  // Ed25519 signature over the message envelope. Populated by both
-  // legacy and composite paths.
+  // Ed25519 signature over the canonical composite messaging transcript
+  // (SHA-256(iv_inner || ciphertext || tag_outer || aad) with `aad` as
+  // defined in the "Canonical composite messaging contract" docblock
+  // above). Composite receivers MUST verify this signature against the
+  // sender's trusted identity key; they MUST NOT accept a signature that
+  // only covers raw `ciphertext`. Legacy-only senders may still sign the
+  // legacy envelope shape during rollout. Populated by both paths.
   bytes signature = 7;
 
+  // Product/display message-type string. Canonical values are the
+  // `MessageType` names: "text", "image", "video", "audio", "voiceNote",
+  // "file", "location". Distinct from the AAD single-byte code: senders
+  // MUST derive `msg_type_byte` (the AAD byte) from the canonical
+  // `MessageType` ordinal using the frozen mapping in the "Canonical
+  // composite messaging contract" docblock above before computing AAD.
   string msg_type = 8;
   int32 padded_size = 9;
   bytes ratchet_pub = 10;
@@ -242,10 +326,20 @@ message ReceiveMessage {
   // Legacy single authentication tag (pre-composite compatibility).
   bytes tag = 7;
 
-  // Ed25519 signature over the message envelope. Populated by both
-  // legacy and composite paths.
+  // Ed25519 signature over the canonical composite messaging transcript
+  // (SHA-256(iv_inner || ciphertext || tag_outer || aad) with `aad` as
+  // defined in the "Canonical composite messaging contract" docblock
+  // above `SendMessage`). Composite receivers MUST verify this signature
+  // against the sender's trusted identity key using the reconstructed
+  // transcript; they MUST NOT accept a signature that only covers raw
+  // `ciphertext`. Legacy-only senders may still sign the legacy envelope
+  // shape during rollout. Populated by both paths.
   bytes signature = 8;
 
+  // Product/display message-type string. See `SendMessage.msg_type` and
+  // the "Canonical composite messaging contract" docblock for the
+  // canonical mapping to the AAD single-byte code (`msg_type_byte:u8`)
+  // that receivers MUST use when reconstructing AAD for verification.
   string msg_type = 9;
   int32 padded_size = 10;
   bytes ratchet_pub = 11;
