@@ -750,6 +750,28 @@ message EditMessage {
   //   - Senders SHALL NOT populate one field and leave the other at
   //     its proto3 default; both fields are populated together or not
   //     at all.
+  //
+  // Known edge case (P5.1-review, 2026-04-17): a legitimate first
+  // message of the first epoch has coords
+  // (ratchetEpoch = 0, messageCounter = 0). Because proto3 scalar
+  // defaults also yield (0, 0), the receiver cannot distinguish
+  // "post-fix sender editing the very first message of the
+  // conversation" from "pre-fix sender omitting these fields". The
+  // receiver-side `hasWireCoords = wireEpoch != 0 || wireCounter != 0`
+  // test misclassifies this case as "pre-fix sender".
+  //
+  // Impact: editing the very first message of a conversation with
+  // allowLegacyWrappedMessageKeyFallback = false will fail closed; the
+  // user sees the pre-edit body. The sender can re-send as a new
+  // message. Counter-0 anchors DO seed at epoch 0, so this is a real
+  // (if narrow) corner case — not a purely theoretical concern.
+  //
+  // Mitigation / follow-up: a future proto delta may convert these to
+  // google.protobuf.Int32Value / Int64Value wrappers for unambiguous
+  // absence signaling (wrapper-present ⇒ populated, wrapper-absent ⇒
+  // legacy). Not blocking for the migration window because the
+  // user-visible impact is limited to "edit of the very first message
+  // post-flag-flip" and the fail-closed behavior is correct.
   int32 edit_ratchet_epoch = 14;
   int64 edit_message_counter = 15;
 }
