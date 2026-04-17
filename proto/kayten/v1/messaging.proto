@@ -635,10 +635,14 @@ message GroupMemberEvent {
 //   - `new_ratchet_pub` / `new_ratchet_seq` on this message are legacy
 //     compatibility data and are NOT authoritative replay metadata for
 //     hardened historical reopen.
-//   - If product later requires edit-specific authoritative replay
-//     coordinates (e.g. `edit_ratchet_epoch`, `edit_message_counter`),
-//     that is a separate additive proto delta — it is intentionally
-//     NOT included here.
+//   - `edit_ratchet_epoch` + `edit_message_counter` (fields 14 + 15) are
+//     the authoritative hardened-history replay coordinates. They MUST
+//     mirror the `ratchetEpoch` and `messageCounter` on the original
+//     message row so hardened-production receivers
+//     (allowLegacyWrappedMessageKeyFallback=false) can re-derive the
+//     original per-message inner key via HistoryKeyRederiver (nearest
+//     counter-0 anchor + bounded forward advance). An edit reuses the
+//     SAME inner key as the original message — no chain advance.
 //
 // The server relays these fields transparently and does not interpret
 // the crypto payload.
@@ -718,6 +722,36 @@ message EditMessage {
   // verification the edit MUST be rejected.
   // Legacy edit senders MAY leave this field empty.
   bytes new_signature = 13;
+
+  // ── Hardened-history replay coordinates (P5.1, 2026-04-17) ──────────
+  // Authoritative ratchet coordinates for hardened-history anchor
+  // re-derive on the receiver side. Receivers running in real-HSM mode
+  // with allowLegacyWrappedMessageKeyFallback=false REQUIRE these to
+  // re-derive the original per-message inner key via
+  // HistoryKeyRederiver (nearest counter-0 anchor for
+  // (conversation_id, direction=incoming, edit_ratchet_epoch) +
+  // bounded forward advance to edit_message_counter). The values
+  // match the `ratchetEpoch` and `messageCounter` on the original
+  // message row; edits replay the same inner key, no new chain
+  // advance.
+  //
+  // Rollout:
+  //   - Composite-capable senders (post-2026-04-17) MUST populate both
+  //     fields with the original message row's coords.
+  //   - Pre-2026-04-17 senders omit these; proto3 default values are
+  //     `edit_ratchet_epoch = 0` and `edit_message_counter = 0`.
+  //   - Receivers MUST treat (0, 0) as "absent" during the migration
+  //     window and fall back to the legacy `wrappedMessageKey` path
+  //     via allowLegacyWrappedMessageKeyFallback=true.
+  //   - Once the flag flips to false in hardened production, edits
+  //     that arrive with both fields still at proto3 defaults from
+  //     pre-fix senders MUST fail closed — receivers SHOULD keep the
+  //     pre-edit row visible and surface a "couldn't apply edit" hint.
+  //   - Senders SHALL NOT populate one field and leave the other at
+  //     its proto3 default; both fields are populated together or not
+  //     at all.
+  int32 edit_ratchet_epoch = 14;
+  int64 edit_message_counter = 15;
 }
 
 // Delete a message for all participants.
