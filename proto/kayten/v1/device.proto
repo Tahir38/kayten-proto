@@ -4,6 +4,8 @@ package kayten.v1;
 
 option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
 
+import "google/protobuf/timestamp.proto";
+
 service DeviceService {
   // Register or replace the device identity key material after HSM setup.
   rpc RegisterIdentityKey(RegisterIdentityKeyRequest) returns (RegisterIdentityKeyResponse);
@@ -28,6 +30,22 @@ service DeviceService {
 
   // Download an encrypted file in chunks (server-streaming).
   rpc DownloadFile(FileDownloadRequest) returns (stream FileChunk);
+
+  // Auth-gated (Bearer JWT). Called at enrollment success and on every
+  // successful LOGIN. Server issues a single-use signed capability JWT
+  // scoped to "revoke the caller's device". The app MUST persist the
+  // returned capability_jwt in a native outbox companion file OUTSIDE
+  // the Keychain/Keystore wipe scope (master §6a.3 / §6a.3.1).
+  rpc IssueSelfRevokeCapability(IssueSelfRevokeCapabilityRequest) returns (IssueSelfRevokeCapabilityResponse);
+
+  // UNAUTHENTICATED. Called from the app's wipe-revocation-outbox drain
+  // (WorkManager / BGAppRefreshTask) after the local wipe has deleted
+  // the JWT refresh token. Server validates the capability_jwt
+  // signature + expiry + single-use jti; on success runs the standard
+  // RevokeDevice path (prekey retirement, inbound queue cleanup,
+  // DEVICE_REVOKED / KEY_CHANGE_ALERT fan-out, identity_keys.revoked_at
+  // populated). See master §9c for the full server contract.
+  rpc RevokeDeviceByCapability(RevokeDeviceByCapabilityRequest) returns (RevokeDeviceByCapabilityResponse);
 }
 
 message Prekey {
@@ -79,6 +97,15 @@ message GetIdentityKeyResponse {
   bytes ed25519_pub = 1;
   bytes ecdh_pub = 2;
   bytes signature = 3;
+
+  // When set, the device has been revoked (PIN-lockout wipe, user-initiated
+  // wipe, or admin `RevokeDevice`). Consumers MUST refuse to start a new
+  // conversation with this identity and raise a KEY_CHANGE_ALERT-driven
+  // re-verification UX. Unset on active devices.
+  //
+  // Populated by `kayten-server` whenever `devices.revoked_at IS NOT NULL`
+  // (see master §6a.4 and the `kayten-server-device-wipe-integration` spec).
+  google.protobuf.Timestamp revoked_at = 4;
 }
 
 message AttestationRequest {
@@ -118,4 +145,33 @@ message FileUploadResponse {
 
 message FileDownloadRequest {
   string file_id = 1;
+}
+
+message IssueSelfRevokeCapabilityRequest {
+  // Intentionally empty — device_id is derived from auth context server-side.
+}
+
+message IssueSelfRevokeCapabilityResponse {
+  // Compact JWT (HS256) with payload:
+  //   { iss: "kayten-server", sub: <device_id>,
+  //     aud: "self-revoke", jti: <uuid-v4>,
+  //     iat: <unix-seconds>, exp: <iat + 30d> }
+  // Signed with server-side `revocation_signing_key` (rotatable).
+  string capability_jwt = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message RevokeDeviceByCapabilityRequest {
+  // Exactly the JWT issued by IssueSelfRevokeCapability.
+  string capability_jwt = 1;
+  // Free-form: "pin_lockout_wipe" | "user_requested" | "silent_wipe_detected" | …
+  string reason = 2;
+}
+
+message RevokeDeviceByCapabilityResponse {
+  // Empty. gRPC status carries outcome:
+  //   OK                    — revoke applied, jti marked used
+  //   FAILED_PRECONDITION   — jti already used (idempotent success; app clears outbox)
+  //   UNAUTHENTICATED       — signature invalid or exp in past
+  //   RESOURCE_EXHAUSTED    — rate-limited (3 req/sub/min)
 }
