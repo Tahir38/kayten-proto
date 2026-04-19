@@ -291,6 +291,30 @@ message SendMessage {
   // state from these fields before decrypting `ciphertext`.
   // Server relays this field transparently.
   PrekeyBootstrap prekey_bootstrap = 20;
+
+  // Client-generated idempotency key for at-most-once server-side delivery.
+  //
+  // The sending device picks a stable UUID-v4 per logical outgoing message,
+  // persists it alongside the local Drift/SwiftData/Room row, and carries
+  // the SAME value on every WebSocket re-send of that message — including
+  // the offline-queue drain after a reconnect and any explicit user retry.
+  //
+  // Server contract (kayten-server-client-msg-id-dedup-spec §2):
+  //   * `(sender_device_id, client_msg_id)` is UNIQUE on the server's
+  //     messages table. A second SendMessage carrying a pair the server
+  //     has already persisted does NOT insert a new row and does NOT
+  //     re-fan-out to recipients — the server re-emits the ORIGINAL
+  //     MessageAck (same server-assigned `message_id`, same `server_seq`,
+  //     same `timestamp`) so clients converge on one delivery regardless
+  //     of how many retry acks they've already lost.
+  //   * Empty value ⇒ legacy sender, no dedup. The row is inserted
+  //     unconditionally (pre-2026-04-19 behaviour). Rollout-compatible.
+  //
+  // Privacy: the server stores this string but never inspects or indexes
+  // it beyond the UNIQUE constraint — it is treated as an opaque client
+  // correlation id. Senders SHOULD use a random UUID-v4 rather than any
+  // value derived from plaintext.
+  string client_msg_id = 21;
 }
 
 message ReceiveMessage {
