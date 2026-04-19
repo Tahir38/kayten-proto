@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+// Canonical constants for the Kayten mobile <-> HSM SPI surface.
+// Every repo (uHSM-Host, uHSM-HSM, kayten-app, kayten-app-v2, kayten-server)
+// imports its firmware key-id boundaries and SPI command ids from here to
+// eliminate the historical 4-way duplication across Dart, Kotlin, C, and Go.
+//
+// Wire-format note: these enum values encode the exact u8 / u32 numeric
+// values that appear on the SPI wire. A Go/Rust/Dart/Kotlin consumer can
+// cast the generated enum directly to its integer representation.
+//
+// See `docs/superpowers/plans/2026-04-17-cross-repo-kmobile-manager-pkcs11-retirement-spec.md`
+// sections 2.6, 2.7, 3, 5, and 9 for the source-of-truth design.
+package kayten.hsm_keys.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/hsm_keys/v1;hsmkeysv1";
+
+// Firmware-assigned `crypto_key_id` boundaries. See master spec §3.1, §5.3
+// (`READ_PUBLIC_KEY_V1` permitted id ranges) and §6a.2 (`Kayten_WipeAllKeyMaterial`
+// zeroization walk).
+//
+// Encoding: every enum value here is the literal u32 that appears on the wire
+// as a `[crypto_key_id:4LE]` field. Adjacent private/public pairs are at
+// `id` / `id+1`.
+//
+// Off-band ids (1..21, 24..34, 45..63, 240..) are available for future bands.
+// Firmware MUST reject ids outside the declared bands with
+// `SPI_MOBILE_STATUS_KEY_ID_NOT_READABLE` (`0xE1`) for reads,
+// `SPI_MOBILE_STATUS_KEY_ID_ROTATE_ONLY` (`0xE2`) for SPK-private writes,
+// or `SPI_MOBILE_STATUS_KEY_ID_STALE` (`0xE3`) for stale rotate arguments.
+enum CryptoKeyId {
+  CRYPTO_KEY_ID_UNSPECIFIED = 0;
+
+  // Identity key pair (Ed25519).
+  CRYPTO_KEY_ID_IDENTITY_PRIV = 22;
+  CRYPTO_KEY_ID_IDENTITY_PUB  = 23;
+
+  // Signed Prekey band — odd = private, even = public.
+  // Five simultaneously-valid pairs: 35/36, 37/38, 39/40, 41/42, 43/44.
+  CRYPTO_KEY_ID_SPK_PRIV_FIRST = 35;
+  CRYPTO_KEY_ID_SPK_PUB_FIRST  = 36;
+  CRYPTO_KEY_ID_SPK_PRIV_LAST  = 43;
+  CRYPTO_KEY_ID_SPK_PUB_LAST   = 44;
+
+  // Messaging bootstrap secret (symmetric; single slot).
+  CRYPTO_KEY_ID_MSG_BOOTSTRAP_SECRET = 64;
+
+  // One-Time Prekey band — 20 pairs from 70/71 through 108/109 (master §5.3, §6a.2).
+  // Private: 70,72,…,108. Public: 71,73,…,109. (SPK band uses odd private / even public;
+  // OPK band uses the opposite pairing — do not copy SPK parity wording here.)
+  // Consumed OPKs are zeroed in-place and remain reserved in the band.
+  CRYPTO_KEY_ID_OPK_PRIV_FIRST = 70;
+  CRYPTO_KEY_ID_OPK_PUB_FIRST  = 71;
+  CRYPTO_KEY_ID_OPK_PRIV_LAST  = 108;
+  CRYPTO_KEY_ID_OPK_PUB_LAST   = 109;
+
+  // ===================================================================
+  // NEW BANDS (master §9b) — close the collision between today's
+  // kayten-app logical slot numbering (9..12 secure-channel, 13..30
+  // messaging LRU, 42..43 voice ephemeral) and this spec's identity
+  // (22/23) + SPK (35..44) bands. Renumbering internal slots into these
+  // bands is a firmware + app config change only; the 1-byte convKey*
+  // fields on 0x40/0x41/0x42 carry the new numeric values unchanged
+  // (all values fit in 0..255).
+  // ===================================================================
+
+  // Secure-channel session keys — used for 0x55 SECURE_EXECUTE_V1
+  // transport (Doppel-AES inner + outer). 8 slots = 4 concurrent
+  // secure-execute sessions × 2 keys each. Today's
+  // kSlotSecureChannelStart..End (9..12) migrates here.
+  CRYPTO_KEY_ID_SECURE_CHANNEL_FIRST = 110;
+  CRYPTO_KEY_ID_SECURE_CHANNEL_LAST  = 117;
+
+  // Voice-call ephemeral + epoch keys — per-call P-256 ECDH + derived
+  // epoch keys. 12 slots = 3 concurrent calls × 4 keys each. Today's
+  // kSlotVoiceEpochInner/Outer (42..43) migrates into this band.
+  CRYPTO_KEY_ID_VOICE_EPHEMERAL_FIRST = 118;
+  CRYPTO_KEY_ID_VOICE_EPHEMERAL_LAST  = 129;
+
+  // Per-conversation messaging keys — LRU-managed by the app's
+  // ConversationSlotManager. 62 slots = 31 conversations × 2 keys
+  // (convKeyInner + convKeyOuter). Today's
+  // kSlotMessagingStart..End (13..30) migrates here.
+  CRYPTO_KEY_ID_CONVERSATION_FIRST = 130;
+  CRYPTO_KEY_ID_CONVERSATION_LAST  = 191;
+
+  // General-purpose ephemeral keys — firmware-assigned ids returned by
+  // GENERATE_MESSAGING_KEY_V1 { kind = EPHEMERAL_ECDH } and readable
+  // via READ_PUBLIC_KEY_V1. 48 slots. Used for X3DH ephemeral ECDH
+  // keys, voice-call transcript-signed ephemerals, etc.
+  CRYPTO_KEY_ID_EPHEMERAL_FIRST = 192;
+  CRYPTO_KEY_ID_EPHEMERAL_LAST  = 239;
+
+  // 240..255 reserved for future bands.
+}
+
+// Cardinalities that ride alongside `CryptoKeyId` — exposed as a separate
+// enum so consumers can reason about band sizes without hand-computing from
+// FIRST / LAST gaps.
+enum CryptoKeyIdBandSize {
+  CRYPTO_KEY_ID_BAND_SIZE_UNSPECIFIED            = 0;
+  CRYPTO_KEY_ID_BAND_SIZE_SPK_PAIRS              = 5;
+  CRYPTO_KEY_ID_BAND_SIZE_OPK_PAIRS              = 20;
+  // New bands (master §9b):
+  CRYPTO_KEY_ID_BAND_SIZE_SECURE_CHANNEL_SLOTS   = 8;
+  CRYPTO_KEY_ID_BAND_SIZE_VOICE_EPHEMERAL_SLOTS  = 12;
+  CRYPTO_KEY_ID_BAND_SIZE_CONVERSATION_SLOTS     = 62;
+  CRYPTO_KEY_ID_BAND_SIZE_EPHEMERAL_SLOTS        = 48;
+}
+
+// SPI command ids on the mobile surface. Every value here matches a byte
+// emitted in the `cmd:1` position of `[A5 5A][length:2LE][cmd:1]…`. Firmware
+// rejects any other id with `SPI_STATUS_CMD_NOT_AVAILABLE` (`0xE0`).
+//
+// Grouping (for readers):
+//  * 0x40..0x42 — existing messaging runtime
+//  * 0x43..0x4F — provisioning + session + storage + voice-frame family
+//  * 0x53..0x5C — call, secure-exec, messaging-key-exchange, epoch, OPK
+//  * 0x60..0x64 — NEW §3.2 PKCS#11 replacements; 0x65..0x66 wipe cmds;
+//                 0x68 wipe-challenge; 0x67 DEV-only init-pin setter
+enum MobileCommandId {
+  MOBILE_COMMAND_ID_UNSPECIFIED = 0;
+
+  // Messaging runtime (pre-existing)
+  MOBILE_COMMAND_ID_ENCRYPT_AND_SIGN_MSG    = 0x40;
+  MOBILE_COMMAND_ID_DECRYPT_AND_VERIFY_MSG  = 0x41;
+  MOBILE_COMMAND_ID_FULL_RATCHET_STEP       = 0x42;
+
+  // Provisioning / session / voice
+  MOBILE_COMMAND_ID_PROBE_STATE_V1              = 0x43;
+  MOBILE_COMMAND_ID_PROVISION_DEVICE_V1         = 0x44;
+  MOBILE_COMMAND_ID_LOGIN_USER_V1               = 0x45;
+  MOBILE_COMMAND_ID_CHANGE_USER_PIN_V1          = 0x46;
+  MOBILE_COMMAND_ID_READ_IDENTITY_PUBLIC_V1     = 0x47;
+  MOBILE_COMMAND_ID_IDENTITY_SIGN_V1            = 0x48;
+  MOBILE_COMMAND_ID_GET_RUNTIME_STATUS_V1       = 0x49;
+  MOBILE_COMMAND_ID_LOGOUT_USER_V1              = 0x4A;
+  MOBILE_COMMAND_ID_VOICE_ENCRYPT_FRAME_V1      = 0x4B;
+  MOBILE_COMMAND_ID_VOICE_DECRYPT_FRAME_V1      = 0x4C;
+  MOBILE_COMMAND_ID_RESET_SESSION_STATE_V1      = 0x4D;
+  MOBILE_COMMAND_ID_WRAP_STORAGE_ROOT_KEY_V1    = 0x4E;
+  MOBILE_COMMAND_ID_UNWRAP_STORAGE_ROOT_KEY_V1  = 0x4F;
+
+  // Call + secure-exec
+  MOBILE_COMMAND_ID_CALL_KEY_AGREE_V1           = 0x53;
+  MOBILE_COMMAND_ID_CALL_TEARDOWN_V1            = 0x54;
+  MOBILE_COMMAND_ID_SECURE_EXECUTE_V1           = 0x55;
+
+  // Messaging key exchange + epoch + OPK
+  MOBILE_COMMAND_ID_MSG_KEY_EXCHANGE_V1             = 0x57;
+  MOBILE_COMMAND_ID_GET_HSM_DET_BUFFER_V1           = 0x59;
+  MOBILE_COMMAND_ID_PEER_RATCHET_STEP_V1            = 0x5A;
+  MOBILE_COMMAND_ID_MSG_KEY_EXCHANGE_RESPONDER_V1   = 0x5B;
+  MOBILE_COMMAND_ID_GENERATE_OPK_V1                 = 0x5C;
+
+  // Pre-existing voice-mode / epoch / HKDF (not in 0x60 block because
+  // assigned earlier, kept here for a complete map)
+  MOBILE_COMMAND_ID_HKDF_DERIVE         = 0x3A;
+  MOBILE_COMMAND_ID_GENERATE_EPOCH_KEY  = 0x3B;
+  MOBILE_COMMAND_ID_SET_VOICE_MODE      = 0x3D;
+  MOBILE_COMMAND_ID_CLEAR_VOICE_MODE    = 0x3E;
+
+  // NEW §3.2 — replace PKCS#11 `C_GenerateKeyPair`, `C_GetAttributeValue`,
+  // `C_DestroyObject`, `C_GenerateRandom` in the mobile dispatch.
+  MOBILE_COMMAND_ID_GENERATE_MESSAGING_KEY_V1 = 0x60;
+  MOBILE_COMMAND_ID_READ_PUBLIC_KEY_V1        = 0x61;
+  MOBILE_COMMAND_ID_DELETE_MESSAGING_KEY_V1   = 0x62;
+  MOBILE_COMMAND_ID_ROTATE_SPK_V1             = 0x63;
+  MOBILE_COMMAND_ID_GENERATE_RANDOM_V1        = 0x64;
+
+  // NEW §3.2 — wipe flows (decimal = wire byte; see §3.0.1 below)
+  MOBILE_COMMAND_ID_USER_INITIATED_WIPE_V1     = 101; // 0x65
+  MOBILE_COMMAND_ID_GET_WIPE_STATUS_V1         = 102; // 0x66
+  // DEV firmware only — PROD omits handler; prod boards return 0xE0.
+  MOBILE_COMMAND_ID_DEV_SET_INIT_PIN_V1        = 103; // 0x67
+  MOBILE_COMMAND_ID_REQUEST_WIPE_CHALLENGE_V1  = 104; // 0x68 — master §5.8
+}
+
+// Runtime provisioning state as reported in `GET_RUNTIME_STATUS_V1` (§5.7)
+// and in the `provisioning_state:1` byte of `PROVISION_DEVICE_V1` responses (§5.1).
+//
+// Wire encoding: master spec §5.1 / §5.7 use u8 wire values
+//   0x00 = PROVISIONING_REQUIRED (fresh or wiped)
+//   0x01 = PROVISIONED
+//   0x02 = LOCKED_WIPED (transient — observable for at most one response;
+//                        on next boot / next 0x49 the device reports
+//                        PROVISIONING_REQUIRED with last_wipe_reason set)
+//
+// Generated-enum numeric values diverge from wire values by +1 because
+// proto3 forces 0 = UNSPECIFIED. Consumers MUST translate via a small
+// wire<->enum map (see references/translators/ for a reference impl).
+enum ProvisioningState {
+  PROVISIONING_STATE_UNSPECIFIED           = 0;
+  PROVISIONING_STATE_PROVISIONING_REQUIRED = 1;  // wire 0x00
+  PROVISIONING_STATE_PROVISIONED           = 2;  // wire 0x01
+  PROVISIONING_STATE_LOCKED_WIPED          = 3;  // wire 0x02 (transient)
+}
+
+// Cause of the most-recent HSM wipe, as reported by
+// `GET_RUNTIME_STATUS_V1` (§5.7) and `GET_WIPE_STATUS_V1` (§5.8).
+//
+// Same wire-vs-enum numbering caveat as `ProvisioningState`.
+enum WipeReason {
+  WIPE_REASON_UNSPECIFIED            = 0;
+  WIPE_REASON_NONE                   = 1;  // wire 0x00
+  WIPE_REASON_PIN_LOCKOUT            = 2;  // wire 0x01
+  WIPE_REASON_USER_REQUEST           = 3;  // wire 0x02
+  WIPE_REASON_ATTESTATION_FAILED     = 4;  // wire 0x03
+  WIPE_REASON_PIN_LOCKOUT_RECOVERY   = 5;  // wire 0x04 — post-power-loss
+                                           // recovery heuristic fired
+                                           // (§6a.2 final paragraph)
+}

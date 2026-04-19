@@ -4,9 +4,41 @@ package kayten.v1;
 
 option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
 
+// AttestationService exposes two independent attestation surfaces:
+//
+//   1. Android Keystore / platform attestation (pre-existing):
+//      SubmitAttestation + VerifyAttestation. These validate the
+//      platform-issued certificate chain and Keystore-bound ECDH key.
+//
+//   2. Verified HSM enrollment (production trust anchor):
+//      IssueEnrollmentChallenge + SubmitEnrollmentAttestation. These
+//      drive the backend-issued 32-byte freshness challenge and the
+//      app invocation of `0x3C GET_DEVICE_ATTESTATION(challenge)` on
+//      the enrolled HSM. The backend verifies the returned signature
+//      against its trusted HSM inventory (keyed by `hsm_serial`) and
+//      the pinned Ed25519 `identity_public_key`.
+//
+// The two surfaces are independent: passing Android Keystore attestation
+// does NOT imply verified HSM enrollment. Production hardware-mode
+// clients MUST complete verified HSM enrollment before the backend
+// treats the device as a trusted HSM-enrolled endpoint — indefinite
+// TOFU is development-only.
 service AttestationService {
+  // Android Keystore / platform attestation — existing flow, unchanged.
   rpc SubmitAttestation(SubmitAttestationRequest) returns (SubmitAttestationResponse);
   rpc VerifyAttestation(VerifyAttestationRequest) returns (VerifyAttestationResponse);
+
+  // Verified HSM enrollment — backend issues a 32-byte freshness
+  // challenge that the app passes to `0x3C GET_DEVICE_ATTESTATION` on
+  // the enrolled HSM.
+  rpc IssueEnrollmentChallenge(IssueEnrollmentChallengeRequest) returns (IssueEnrollmentChallengeResponse);
+
+  // Verified HSM enrollment — app submits the HSM-signed attestation
+  // response bound to the previously issued challenge. Backend compares
+  // `hsm_serial` and `identity_public_key` against its trusted HSM
+  // inventory and verifies the attestation signature over the frozen
+  // challenge-bound transcript.
+  rpc SubmitEnrollmentAttestation(SubmitEnrollmentAttestationRequest) returns (SubmitEnrollmentAttestationResponse);
 }
 
 message SubmitAttestationRequest {
@@ -29,4 +61,103 @@ message VerifyAttestationResponse {
   string os_version = 3;
   string os_patch_level = 4;
   string boot_state = 5;
+}
+
+// Request a fresh 32-byte enrollment challenge for a specific device and
+// HSM serial. The backend binds the issued challenge to this enrollment
+// attempt so that the subsequent `SubmitEnrollmentAttestation` call can
+// be anchored to both the device and the serial that asked for it.
+message IssueEnrollmentChallengeRequest {
+  // Server-side device identifier. Required.
+  string device_id = 1;
+
+  // HSM serial number the app intends to enroll. Required — the backend
+  // uses this to look up the trusted inventory record whose pinned
+  // `identity_public_key` the attestation response will be verified
+  // against.
+  string hsm_serial = 2;
+}
+
+message IssueEnrollmentChallengeResponse {
+  // 32-byte freshness challenge. The app passes these exact bytes to
+  // `0x3C GET_DEVICE_ATTESTATION(challenge)` on the HSM. Receivers MUST
+  // NOT rehash, truncate, or extend these bytes before forwarding to
+  // the HSM.
+  bytes challenge = 1;
+
+  // Absolute expiry time (unix seconds) after which the backend SHALL
+  // reject a matching `SubmitEnrollmentAttestation` call as expired.
+  int64 expires_at = 2;
+}
+
+// Attestation payload returned by `0x3C GET_DEVICE_ATTESTATION` bound to
+// the previously issued challenge. The app relays these bytes/values
+// byte-for-byte from the HSM response — it SHALL NOT mutate or
+// re-derive any field.
+message SubmitEnrollmentAttestationRequest {
+  // Server-side device identifier. Required.
+  string device_id = 1;
+
+  // Exact 32-byte challenge that was passed to the HSM. Required. The
+  // backend matches this against the challenge it issued in
+  // `IssueEnrollmentChallengeResponse` and rejects if expired or
+  // unknown.
+  bytes challenge = 2;
+
+  // HSM serial number as reported by `0x3C`. Required. The backend
+  // compares this against its trusted HSM inventory; unknown serial
+  // MUST fail closed.
+  string hsm_serial = 3;
+
+  // HSM firmware version string as reported by `0x3C`. Informational
+  // inventory metadata; the backend MAY enforce a minimum version
+  // policy against it.
+  string hsm_firmware_version = 4;
+
+  // Ed25519 identity public key as reported by `0x3C`. Required. The
+  // backend compares this against the pinned identity key in its
+  // trusted inventory record; mismatch MUST fail closed.
+  bytes identity_public_key = 5;
+
+  // Ed25519 signature produced by the HSM over the frozen
+  // challenge-bound attestation transcript defined by the firmware
+  // `0x3C` contract. Required. The backend verifies this signature
+  // against the reported `identity_public_key` and rejects on failure.
+  // The transcript shape is authoritative in the firmware contract and
+  // MUST NOT be re-invented by app/backend implementations.
+  bytes attestation_signature = 6;
+}
+
+// Explicit enrollment result — backends SHALL return one of these
+// statuses so clients can distinguish fresh-closure failure modes from
+// generic transport errors. Adding a new status is an additive change;
+// consumers MUST treat unknown values as "not verified, fail closed".
+enum EnrollmentStatus {
+  ENROLLMENT_STATUS_UNSPECIFIED = 0;
+  // All checks passed: challenge fresh & bound, serial in inventory,
+  // identity key matches pin, signature verifies against the
+  // challenge-bound transcript.
+  ENROLLMENT_STATUS_VERIFIED = 1;
+  ENROLLMENT_STATUS_CHALLENGE_EXPIRED = 2;
+  ENROLLMENT_STATUS_CHALLENGE_MISMATCH = 3;
+  ENROLLMENT_STATUS_UNKNOWN_SERIAL = 4;
+  ENROLLMENT_STATUS_IDENTITY_KEY_MISMATCH = 5;
+  ENROLLMENT_STATUS_SIGNATURE_INVALID = 6;
+  // An enrollment record exists for this device but points at a
+  // different HSM. Replacement requires an explicit backend-approved
+  // recovery/re-enrollment flow — the backend MUST NOT silently
+  // overwrite the pinned identity.
+  ENROLLMENT_STATUS_REPLACEMENT_REQUIRES_RECOVERY = 7;
+}
+
+message SubmitEnrollmentAttestationResponse {
+  // Authoritative enrollment result. See EnrollmentStatus for fail-closed
+  // semantics. Callers MUST gate production trust decisions on
+  // `status == ENROLLMENT_STATUS_VERIFIED`; any other value SHALL be
+  // treated as "not verified, fail closed".
+  EnrollmentStatus status = 1;
+
+  // Optional human-readable diagnostic for logs/UX. Not authoritative —
+  // clients SHALL NOT parse this string for policy decisions.
+  string detail = 2;
 }

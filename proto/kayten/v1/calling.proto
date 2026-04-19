@@ -4,6 +4,40 @@ package kayten.v1;
 
 option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
 
+// ── Voice mode contract ─────────────────────────────────────────────────
+// Production voice supports two user-selectable modes, both defined in
+// the authoritative system solution spec:
+//
+//   - "mode_b" / Balanced Mode B (DEFAULT selected product mode):
+//       HSM-authenticated call agreement; HSM-derived call-scoped epoch
+//       state; native-engine frame crypto using bounded, native-only
+//       active-call epoch material (never surfaced to Dart/UI
+//       ownership); mandatory zeroization on rotation/teardown.
+//       `CallVoiceRekey.epoch_id` carries the authoritative Mode B
+//       epochIndex (see that field for the full contract).
+//
+//   - "mode_a" / Strict Mode A (stricter selectable profile):
+//       HSM-authenticated call agreement; per-frame encrypt/decrypt
+//       through dedicated HSM frame commands; no plaintext voice key
+//       material in Android/app memory; mandatory teardown/zeroization.
+//
+// Wire semantics of the `voice_mode` string field on `CallOffer` /
+// `CallAnswer`:
+//   - "mode_b"  → Balanced Mode B (default)
+//   - "mode_a"  → Strict Mode A
+//   - empty     → legacy / unspecified; production receivers MUST
+//                 treat absence as "no selection signalled" and SHALL
+//                 NOT silently downgrade to software-only crypto.
+//
+// Both peers MUST agree on the negotiated mode before the call begins;
+// if negotiation cannot converge on a mutually supported mode, the call
+// MUST fail closed.
+//
+// The server relays `voice_mode`, `voice_ecdh_pub`, `voice_ecdh_sig`,
+// DTLS fingerprints, ICE candidates, and rekey metadata opaquely and
+// byte-for-byte; it SHALL NOT reinterpret, synthesize, or rewrite any
+// of these crypto / negotiation fields.
+
 message CallOffer {
   string conversation_id = 1;
   string sdp_offer = 2;
@@ -12,6 +46,9 @@ message CallOffer {
   bytes dtls_fingerprint_signature = 5;
   bytes signer_identity_pub = 6;
   bytes voice_ecdh_pub = 7;
+  // Selected voice mode for this call; see the "Voice mode contract"
+  // docblock at the top of this file. Values: "mode_b" (default Balanced
+  // Mode B), "mode_a" (Strict Mode A), or empty (unspecified).
   string voice_mode = 8;
   // Server-populated TURN credentials for the recipient.
   string turn_username = 9;
@@ -27,6 +64,9 @@ message CallAnswer {
   bytes dtls_fingerprint_signature = 4;
   bytes signer_identity_pub = 5;
   bytes voice_ecdh_pub = 6;
+  // Selected voice mode for this call; see the "Voice mode contract"
+  // docblock at the top of this file. Values: "mode_b" (default Balanced
+  // Mode B), "mode_a" (Strict Mode A), or empty (unspecified).
   string voice_mode = 7;
   // Server-populated TURN credentials for the caller.
   string turn_username = 8;
@@ -57,8 +97,28 @@ message CallDtlsFingerprint {
   bytes signature = 3;
 }
 
+// CallVoiceRekey carries a Balanced Mode B epoch rotation for an active
+// call. See the "Voice mode contract" docblock at the top of this file.
+// For Strict Mode A this message is unused — Mode A rekey is owned by
+// the HSM frame-command family, not by a wire-visible rekey envelope.
+//
+// Server relay: opaque, byte-for-byte; the server MUST NOT rewrite,
+// synthesize, or reorder any rekey field.
 message CallVoiceRekey {
   string conversation_id = 1;
+  // Peer's rotated ECDH public key for the next Mode B epoch.
   bytes new_ecdh_pub = 2;
-  int32 epoch_id = 3;
+  // Authoritative Mode B epoch index for this rotation. Maps directly to
+  // the `epochIndex:4B` request field of `0x3B GENERATE_EPOCH_KEY` in
+  // the HSM voice contract — full 32-bit unsigned range. The
+  // app/Host/HSM stack SHALL treat this as the single authoritative
+  // epoch index for the rotation; receivers MUST NOT locally synthesize
+  // or re-guess an epoch index when this value is present on the wire.
+  //
+  // Wire compatibility note: this field was previously declared `int32`.
+  // proto3 varint encoding is identical for non-negative values, so any
+  // previously-populated value in `[0, 2^31-1]` round-trips unchanged.
+  // The `uint32` declaration is the canonical match for the firmware
+  // contract and removes the unrepresentable upper half.
+  uint32 epoch_id = 3;
 }

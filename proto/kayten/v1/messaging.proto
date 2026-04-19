@@ -9,6 +9,13 @@ import "kayten/v1/calling.proto";
 
 // Envelope wraps all WebSocket messages between client and server.
 message Envelope {
+  // Reserved: oneof payload fields for the obsolete polling-based
+  // KEY_EXCHANGE_REQUEST / KEY_EXCHANGE_RESPONSE bootstrap flow
+  // (cross-repo-production-spec-v1 §3.1). First-message bootstrap now
+  // travels in SendMessage.prekey_bootstrap.
+  reserved 30, 31;
+  reserved "key_exchange_request", "key_exchange_response";
+
   EnvelopeType type = 1;
   string id = 2;
   google.protobuf.Timestamp timestamp = 3;
@@ -27,8 +34,6 @@ message Envelope {
     CallRinging call_ringing = 24;
     CallDtlsFingerprint call_dtls_fingerprint = 25;
     CallVoiceRekey call_voice_rekey = 26;
-    KeyExchangeRequest key_exchange_request = 30;
-    KeyExchangeResponse key_exchange_response = 31;
     KeyRatchetNotify key_ratchet_notify = 32;
     KeyChangeAlert key_change_alert = 33;
     PresenceUpdate presence_update = 40;
@@ -51,6 +56,12 @@ message Envelope {
 }
 
 enum EnvelopeType {
+  // Reserved: the obsolete polling-based bootstrap envelope types.
+  // First-message bootstrap now travels in SendMessage.prekey_bootstrap
+  // (cross-repo-production-spec-v1 §3.1).
+  reserved 20, 21;
+  reserved "KEY_EXCHANGE_REQUEST", "KEY_EXCHANGE_RESPONSE";
+
   ENVELOPE_TYPE_UNSPECIFIED = 0;
   SEND_MESSAGE = 1;
   RECEIVE_MESSAGE = 2;
@@ -65,8 +76,6 @@ enum EnvelopeType {
   CALL_RINGING = 14;
   CALL_DTLS_FINGERPRINT = 15;
   CALL_VOICE_REKEY = 16;
-  KEY_EXCHANGE_REQUEST = 20;
-  KEY_EXCHANGE_RESPONSE = 21;
   KEY_RATCHET_NOTIFY = 22;
   KEY_CHANGE_ALERT = 23;
   GROUP_SENDER_KEY = 24;
@@ -87,14 +96,154 @@ enum EnvelopeType {
   ERROR = 99;
 }
 
+// PrekeyBootstrap carries the metadata a responder needs to derive a fresh
+// Double Ratchet session from the very first message in a conversation,
+// without requiring a prior KEY_EXCHANGE_REQUEST round-trip.
+//
+// When a SendMessage envelope includes this field, the responder treats the
+// message as a prekey-bootstrap and derives initial state from these fields
+// before decrypting `ciphertext`.
+//
+// The server relays this field transparently — it does NOT validate or
+// inspect any contents.
+message PrekeyBootstrap {
+  // Initiator's ephemeral ECDH public key.
+  bytes initiator_ephemeral = 1;
+
+  // Initiator's Ed25519 identity public key.
+  bytes initiator_identity_pub = 2;
+
+  // Identifier of the consumed one-time prekey, if any. 0 = no OPK.
+  uint32 consumed_opk_id = 3;
+
+  // Identifier of the signed prekey used for X3DH (for ratchet binding).
+  uint32 signed_prekey_id = 4;
+
+  // Optional sender device id, in case the message router needs it before
+  // the responder has a contact entry.
+  string sender_device_id = 5;
+}
+
+// ── Canonical composite messaging contract ─────────────────────────────
+// The following contract applies to both `SendMessage` and
+// `ReceiveMessage` composite-path fields and is the only production
+// interpretation.
+//
+// Canonical composite signature transcript (the bytes `signature` MUST
+// cover, reconstructed identically by sender and receiver):
+//
+//   transcript = SHA-256( iv_inner || ciphertext || tag_outer || aad )
+//   signature  = Ed25519(sender_identity_priv, transcript)
+//
+// Canonical messaging AAD — frozen, versioned, shared by sender and
+// receiver. Receivers MUST reconstruct AAD using exactly the same inputs
+// and MUST NOT treat AAD shape as repo-local guesswork:
+//
+//   aad      = SHA-256(preimage)
+//   preimage = utf8(conversation_id)
+//           || utf8(sender_device_id)
+//           || msg_type_byte:u8
+//           || ratchet_seq:u32_be
+//           || utf8("kayten-msg-aad-v1")
+//
+// `msg_type_byte:u8` is exactly one byte. It is NOT the UTF-8 of the
+// `string msg_type` wire field; the wire string is product/display
+// metadata, while AAD is bound to the canonical single-byte code
+// frozen below. This table is the authoritative, frozen proto contract
+// for the AAD byte under "kayten-msg-aad-v1". It MIRRORS the existing
+// `MessageType` ordinal already used by the live sender/receiver — it
+// is not a new contract:
+//
+//   MessageType   wire string (typical)    msg_type_byte (hex)
+//   ────────────────────────────────────────────────────────────
+//   text          "text" or ""             0x00
+//   image         "image"                  0x01
+//   video         "video"                  0x02
+//   audio         "audio"                  0x03
+//   voiceNote     "voiceNote"              0x04
+//   file          "file"                   0x05
+//   location      "location"               0x06
+//
+// Bytes >= 0x07 are reserved for future versioned extension and MUST
+// NOT be emitted under "kayten-msg-aad-v1". Adding a new
+// `msg_type_byte` value, removing one, or remapping any existing
+// MessageType to a different byte REQUIRES a new explicit AAD version
+// suffix (e.g. "kayten-msg-aad-v2") and a coordinated cross-repo
+// rollout. The wire `string msg_type` may also evolve, but ANY change
+// to the byte mapping above is a versioned contract change, not a
+// silent rename.
+//
+// The trailing domain-version tag "kayten-msg-aad-v1" is the authoritative
+// AAD version identifier. Any future AAD schema change REQUIRES a new
+// explicit version suffix (e.g. "kayten-msg-aad-v2") and a coordinated
+// cross-repo rollout — receivers MUST NOT accept silent AAD changes.
+//
+// Composite verification expectations (receivers MUST enforce all):
+//   1. reconstruct `aad` from the same inputs the sender used;
+//   2. reconstruct `transcript` from `iv_inner || ciphertext || tag_outer
+//      || aad`;
+//   3. verify `signature` against the sender's trusted identity key for
+//      that transcript (the same sender device identity used for trust
+//      lookup SHALL be used for signature verification);
+//   4. decrypt with the authoritative wire-provided `iv_inner` /
+//      `iv_outer` — never guess, reconstruct, or locally synthesize IVs.
+//
+// Proto + server relay contract:
+//   - The server is an OPAQUE, byte-preserving relay for every composite
+//     crypto field (`ciphertext`, `iv_inner`, `iv_outer`, `tag_outer`,
+//     `signature`, and on edits: `new_ciphertext`, `new_iv_inner`,
+//     `new_iv_outer`, `new_tag_outer`, `new_signature`).
+//   - The server SHALL NOT interpret, normalize, synthesize, or repair
+//     any crypto field — it is not a crypto-field repair layer.
+//   - Delete/tombstone paths SHALL clear both legacy and composite
+//     payload fields together.
 message SendMessage {
   string conversation_id = 1;
   string recipient_id = 2;
   string recipient_device_id = 3;
+
+  // Encrypted message body. Populated by both legacy and composite paths.
   bytes ciphertext = 4;
+
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // These fields carry the pre-composite (single-IV, single/dual-tag)
+  // crypto shape. They remain for backward compatibility with clients
+  // that have not yet adopted the 0x40 ENCRYPT_AND_SIGN_MSG composite
+  // runtime path.
+  //
+  // Sender rules during rollout:
+  //   - Legacy-only senders MAY continue populating only legacy fields.
+  //   - Composite-capable senders SHOULD dual-write both canonical
+  //     composite fields and legacy compatibility fields.
+  //   - Senders SHALL NOT populate conflicting values across legacy
+  //     and composite fields.
+  //
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+  //
+  // The server relays these fields transparently and does not interpret
+  // the crypto payload.
+
+  // Legacy single IV (pre-composite compatibility).
   bytes iv = 5;
+  // Legacy single authentication tag (pre-composite compatibility).
   bytes tag = 6;
+
+  // Ed25519 signature over the canonical composite messaging transcript
+  // (SHA-256(iv_inner || ciphertext || tag_outer || aad) with `aad` as
+  // defined in the "Canonical composite messaging contract" docblock
+  // above). Composite receivers MUST verify this signature against the
+  // sender's trusted identity key; they MUST NOT accept a signature that
+  // only covers raw `ciphertext`. Legacy-only senders may still sign the
+  // legacy envelope shape during rollout. Populated by both paths.
   bytes signature = 7;
+
+  // Product/display message-type string. Canonical values are the
+  // `MessageType` names: "text", "image", "video", "audio", "voiceNote",
+  // "file", "location". Distinct from the AAD single-byte code: senders
+  // MUST derive `msg_type_byte` (the AAD byte) from the canonical
+  // `MessageType` ordinal using the frozen mapping in the "Canonical
+  // composite messaging contract" docblock above before computing AAD.
   string msg_type = 8;
   int32 padded_size = 9;
   bytes ratchet_pub = 10;
@@ -103,8 +252,69 @@ message SendMessage {
   string reply_to_message_id = 12;
   int32 ttl_seconds = 13;
   bool is_view_once = 14;
+
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility).
   bytes tag_inner = 15;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path.
   bytes tag_outer = 16;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // These fields carry the composite crypto shape returned by the HSM
+  // ENCRYPT_AND_SIGN_MSG path. `iv_inner` and `iv_outer` are authoritative
+  // sender-produced composite AES-GCM IVs — they are NOT transport-only
+  // hints, placeholders, or values that may be guessed, derived, or
+  // locally synthesized by receivers. Composite-capable senders populate:
+  //   ciphertext, iv_inner, iv_outer, tag_outer, signature
+  //
+  // The server relays these fields transparently and does not interpret,
+  // rewrite, or synthesize any of the crypto payload or its metadata.
+  //
+  // Receiver precedence:
+  //   1. If iv_inner / iv_outer are populated, receivers MUST use those
+  //      populated values directly as the authoritative composite IVs
+  //      (composite path). Receivers MUST NOT derive, guess, or locally
+  //      synthesize iv_inner / iv_outer when they are present on the wire.
+  //   2. Otherwise (both absent) receivers SHALL fall back to legacy `iv`.
+  //   3. Receivers SHALL NOT ignore populated composite fields and
+  //      silently prefer legacy fields.
+
+  // Authoritative inner AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
+  bytes iv_inner = 17;
+  // Authoritative outer AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
+  bytes iv_outer = 18;
+
+  // Optional prekey bootstrap metadata. When present, this is the first
+  // message in a new conversation and the responder MUST derive session
+  // state from these fields before decrypting `ciphertext`.
+  // Server relays this field transparently.
+  PrekeyBootstrap prekey_bootstrap = 20;
+
+  // Client-generated idempotency key for at-most-once server-side delivery.
+  //
+  // The sending device picks a stable UUID-v4 per logical outgoing message,
+  // persists it alongside the local Drift/SwiftData/Room row, and carries
+  // the SAME value on every WebSocket re-send of that message — including
+  // the offline-queue drain after a reconnect and any explicit user retry.
+  //
+  // Server contract (kayten-server-client-msg-id-dedup-spec §2):
+  //   * `(sender_device_id, client_msg_id)` is UNIQUE on the server's
+  //     messages table. A second SendMessage carrying a pair the server
+  //     has already persisted does NOT insert a new row and does NOT
+  //     re-fan-out to recipients — the server re-emits the ORIGINAL
+  //     MessageAck (same server-assigned `message_id`, same `server_seq`,
+  //     same `timestamp`) so clients converge on one delivery regardless
+  //     of how many retry acks they've already lost.
+  //   * Empty value ⇒ legacy sender, no dedup. The row is inserted
+  //     unconditionally (pre-2026-04-19 behaviour). Rollout-compatible.
+  //
+  // Privacy: the server stores this string but never inspects or indexes
+  // it beyond the UNIQUE constraint — it is treated as an opaque client
+  // correlation id. Senders SHOULD use a random UUID-v4 rather than any
+  // value derived from plaintext.
+  string client_msg_id = 21;
 }
 
 message ReceiveMessage {
@@ -112,10 +322,48 @@ message ReceiveMessage {
   string conversation_id = 2;
   string sender_id = 3;
   string sender_device_id = 4;
+
+  // Encrypted message body. Populated by both legacy and composite paths.
   bytes ciphertext = 5;
+
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // These fields carry the pre-composite (single-IV, single/dual-tag)
+  // crypto shape. They remain for backward compatibility with clients
+  // that have not yet adopted the 0x40 ENCRYPT_AND_SIGN_MSG composite
+  // runtime path.
+  //
+  // Sender rules during rollout:
+  //   - Legacy-only senders MAY continue populating only legacy fields.
+  //   - Composite-capable senders SHOULD dual-write both canonical
+  //     composite fields and legacy compatibility fields.
+  //   - Senders SHALL NOT populate conflicting values across legacy
+  //     and composite fields.
+  //
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+  //
+  // The server relays these fields transparently and does not interpret
+  // the crypto payload.
+
+  // Legacy single IV (pre-composite compatibility).
   bytes iv = 6;
+  // Legacy single authentication tag (pre-composite compatibility).
   bytes tag = 7;
+
+  // Ed25519 signature over the canonical composite messaging transcript
+  // (SHA-256(iv_inner || ciphertext || tag_outer || aad) with `aad` as
+  // defined in the "Canonical composite messaging contract" docblock
+  // above `SendMessage`). Composite receivers MUST verify this signature
+  // against the sender's trusted identity key using the reconstructed
+  // transcript; they MUST NOT accept a signature that only covers raw
+  // `ciphertext`. Legacy-only senders may still sign the legacy envelope
+  // shape during rollout. Populated by both paths.
   bytes signature = 8;
+
+  // Product/display message-type string. See `SendMessage.msg_type` and
+  // the "Canonical composite messaging contract" docblock for the
+  // canonical mapping to the AAD single-byte code (`msg_type_byte:u8`)
+  // that receivers MUST use when reconstructing AAD for verification.
   string msg_type = 9;
   int32 padded_size = 10;
   bytes ratchet_pub = 11;
@@ -128,8 +376,44 @@ message ReceiveMessage {
   bool is_deleted_for_everyone = 17;
   int32 ttl_seconds = 18;
   bool is_view_once = 19;
+
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility).
   bytes tag_inner = 20;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path.
   bytes tag_outer = 21;
+
+  // Mirrors SendMessage.prekey_bootstrap. Present when this message is the
+  // first in a conversation and the responder must derive session state
+  // from the bootstrap before decrypting `ciphertext`.
+  PrekeyBootstrap prekey_bootstrap = 22;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // These fields carry the composite crypto shape returned by the HSM
+  // ENCRYPT_AND_SIGN_MSG path. `iv_inner` and `iv_outer` are authoritative
+  // sender-produced composite AES-GCM IVs — they are NOT transport-only
+  // hints, placeholders, or values that may be guessed, derived, or
+  // locally synthesized by receivers. Composite-capable senders populate:
+  //   ciphertext, iv_inner, iv_outer, tag_outer, signature
+  //
+  // The server relays these fields transparently and does not interpret,
+  // rewrite, or synthesize any of the crypto payload or its metadata.
+  //
+  // Receiver precedence:
+  //   1. If iv_inner / iv_outer are populated, receivers MUST use those
+  //      populated values directly as the authoritative composite IVs
+  //      (composite path). Receivers MUST NOT derive, guess, or locally
+  //      synthesize iv_inner / iv_outer when they are present on the wire.
+  //   2. Otherwise (both absent) receivers SHALL fall back to legacy `iv`.
+  //   3. Receivers SHALL NOT ignore populated composite fields and
+  //      silently prefer legacy fields.
+
+  // Authoritative inner AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
+  bytes iv_inner = 23;
+  // Authoritative outer AES-GCM IV produced by the sender (composite
+  // runtime). Receivers MUST use this value directly when present.
+  bytes iv_outer = 24;
 }
 
 message MessageAck {
@@ -152,23 +436,10 @@ message TypingIndicator {
   bool is_typing = 2;
 }
 
-message KeyExchangeRequest {
-  string target_device_id = 1;
-  bytes ecdh_pub = 2;
-  bytes identity_pub = 3;
-  bytes prekey_id_used = 4;
-  // Added for ratchet state keying: responder must know conversation and sender
-  string conversation_id = 5;
-  string sender_device_id = 6;
-}
-
-message KeyExchangeResponse {
-  string from_device_id = 1;
-  bytes ecdh_pub = 2;
-  bool accepted = 3;
-  // Echoed from request so initiator can look up the exact pending session.
-  string conversation_id = 4;
-}
+// KeyExchangeRequest and KeyExchangeResponse have been removed — the old
+// polling-based bootstrap flow is superseded by SendMessage.prekey_bootstrap
+// (cross-repo-production-spec-v1 §3.1). Their Envelope oneof field numbers
+// (30, 31) and EnvelopeType enum values (20, 21) are reserved above.
 
 message KeyRatchetNotify {
   string conversation_id = 1;
@@ -228,10 +499,129 @@ message DeviceRevoked {
   string reason = 2;
 }
 
+// GroupSenderKey carries a per-recipient, ratchet-protected distribution
+// of a group sender-key seed to one member of a group conversation.
+//
+// Under the SKDM model (group-file-skdm-cross-repo-spec-v1 §2.1), the
+// sender serializes an SkdmPayload, encrypts it through the existing
+// 1:1 ratchet session to the target recipient, and carries the resulting
+// ciphertext + ratchet metadata in this envelope. The server relays the
+// envelope unmodified — it never sees sender-key material in plaintext.
+//
+// This message is NOT a device-bound wrapped key blob. The pre-SKDM
+// `sender_key = 2` field has been removed; its field number is reserved
+// to prevent reuse.
 message GroupSenderKey {
+  // Group conversation this sender key belongs to.
   string conversation_id = 1;
-  bytes sender_key = 2;         // Encrypted sender key blob
-  string target_user_id = 3;    // Intended recipient (relay via 1:1)
+
+  // Reserved: the pre-SKDM `sender_key` blob (device-bound wrapped key
+  // transport). Removed per group-file-skdm-cross-repo-spec-v1 §2.1.
+  reserved 2;
+  reserved "sender_key";
+
+  // Single recipient of this per-member fanout envelope. The sender
+  // emits one GroupSenderKey envelope per target member, each encrypted
+  // through the 1:1 session to that member.
+  string target_user_id = 3;
+
+  // Sender identity — carried in plaintext at the envelope layer so the
+  // recipient can look up the correct 1:1 ratchet session before
+  // attempting to decrypt `ciphertext`.
+  string sender_user_id = 4;
+  string sender_device_id = 5;
+
+  // 1:1-session ciphertext of the serialized SkdmPayload for this
+  // recipient. Decrypted with the recipient's existing ratchet state
+  // against `sender_user_id`/`sender_device_id`.
+  bytes ciphertext = 6;
+
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // These fields carry the pre-composite (single-IV) crypto shape for
+  // the 1:1 ratchet protection of the SKDM distribution. They remain
+  // for backward compatibility with clients that have not yet adopted
+  // the composite runtime path.
+  //
+  // Sender rules during rollout:
+  //   - Legacy-only senders MAY continue populating only legacy fields.
+  //   - Composite-capable senders SHOULD dual-write both canonical
+  //     composite fields and legacy compatibility fields if older
+  //     recipients still exist.
+  //   - Senders SHALL NOT populate conflicting values across legacy
+  //     and composite fields.
+  //
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+
+  // Legacy single IV for the 1:1 SKDM encryption (pre-composite compatibility).
+  bytes iv = 7;
+
+  // Ed25519 signature over the distribution envelope, verifiable
+  // against the sender's registered identity key. Populated by both
+  // legacy and composite paths.
+  bytes signature = 8;
+
+  // Ratchet metadata required to advance the recipient's 1:1 ratchet
+  // state and decrypt `ciphertext`.
+  bytes ratchet_pub = 9;
+  int32 ratchet_seq = 10;
+
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility).
+  bytes tag_inner = 11;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path.
+  bytes tag_outer = 12;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // These fields carry the composite crypto shape for the 1:1-protected
+  // SKDM distribution. Composite-capable senders populate:
+  //   ciphertext, iv_inner, iv_outer, tag_outer, signature
+  //
+  // Receiver precedence:
+  //   1. If iv_inner / iv_outer are populated, receivers SHALL prefer
+  //      them (composite path).
+  //   2. Otherwise receivers SHALL fall back to legacy `iv`.
+  //   3. Receivers SHALL NOT ignore populated composite fields and
+  //      silently prefer legacy fields.
+
+  // Inner AES-GCM IV (composite runtime).
+  bytes iv_inner = 13;
+  // Outer AES-GCM IV (composite runtime).
+  bytes iv_outer = 14;
+}
+
+// SkdmPayload is the plaintext carried inside GroupSenderKey.ciphertext.
+// It is never sent on the wire unencrypted — it is serialized, then
+// encrypted through the sender's 1:1 ratchet session to each recipient,
+// and the resulting bytes are carried in GroupSenderKey.ciphertext.
+//
+// The seeds are raw key material the recipient stores locally (for
+// example via wrap_storage_root_key) and uses as HKDF input for the
+// group ratchet chains that decrypt subsequent group messages from this
+// sender on this chain.
+message SkdmPayload {
+  // Group conversation this sender key belongs to.
+  string conversation_id = 1;
+
+  // Monotonically increasing chain id. A sender rotates chain_id when
+  // starting a new group sender-key chain (for example after a group
+  // membership change or a forced rekey).
+  uint32 chain_id = 2;
+
+  // Inner seed — exactly 32 bytes. Protobuf cannot enforce the exact
+  // length at the schema level; the application layer MUST validate
+  // `len(inner_seed) == 32` before use.
+  bytes inner_seed = 3;
+
+  // Outer seed — exactly 32 bytes. Protobuf cannot enforce the exact
+  // length at the schema level; the application layer MUST validate
+  // `len(outer_seed) == 32` before use.
+  bytes outer_seed = 4;
+
+  // Sender's Ed25519 identity public key, echoed so the recipient can
+  // bind the seeds to the expected signing identity independently of
+  // the transport-layer 1:1 session lookup.
+  bytes signing_pub = 5;
 }
 
 message GroupMemberEvent {
@@ -243,17 +633,171 @@ message GroupMemberEvent {
 }
 
 // Edit a previously sent message. Requires new ciphertext (ratchet advance).
+//
+// Rollout behavior:
+//   - Legacy-only senders MAY populate only legacy fields and MAY leave
+//     `new_signature` empty.
+//   - Composite-capable senders MUST populate:
+//       new_ciphertext, new_iv_inner, new_iv_outer, new_tag_outer,
+//       new_signature
+//     and SHOULD also dual-write legacy compatibility fields.
+//   - Senders SHALL NOT populate conflicting values across legacy
+//     and composite fields.
+//   - Receivers MUST treat an edit as composite when `new_iv_inner`
+//     and `new_iv_outer` are both populated.
+//   - Composite edit receivers MUST require `new_signature`. If
+//     composite fields are present but `new_signature` is empty,
+//     malformed, or fails verification, receivers MUST reject the edit.
+//   - Receivers SHALL NOT ignore populated composite fields and
+//     silently prefer legacy fields.
+//
+// Hardened edit replay contract:
+//   - An edit does NOT advance the hardened local-history replay chain.
+//   - On historical reopen, receivers MUST replay the edit using the
+//     original message row's replay coordinates (ratchet_pub / ratchet_seq
+//     captured at the time the original message was first decrypted).
+//   - `new_ratchet_pub` / `new_ratchet_seq` on this message are legacy
+//     compatibility data and are NOT authoritative replay metadata for
+//     hardened historical reopen.
+//   - `edit_ratchet_epoch` + `edit_message_counter` (fields 14 + 15) are
+//     the authoritative hardened-history replay coordinates. They MUST
+//     mirror the `ratchetEpoch` and `messageCounter` on the original
+//     message row so hardened-production receivers
+//     (allowLegacyWrappedMessageKeyFallback=false) can re-derive the
+//     original per-message inner key via HistoryKeyRederiver (nearest
+//     counter-0 anchor + bounded forward advance). An edit reuses the
+//     SAME inner key as the original message — no chain advance.
+//
+// The server relays these fields transparently and does not interpret
+// the crypto payload.
 message EditMessage {
   string message_id = 1;
   string conversation_id = 2;
+
+  // Encrypted replacement body. Populated by both legacy and composite paths.
   bytes new_ciphertext = 3;
+
+  // ── Legacy / transition fields ──────────────────────────────────────
+  // Pre-composite crypto shape. Kept for backward compatibility.
+  // In proto3 an unpopulated bytes field is zero-length in generated
+  // clients; receivers MUST treat zero-length as "absent".
+
+  // Legacy single IV (pre-composite compatibility).
   bytes new_iv = 4;
+  // Legacy single authentication tag (pre-composite compatibility).
   bytes new_tag = 5;
+
   int32 edit_seq = 6;
+
+  // Legacy compatibility ratchet coordinates. These are NOT authoritative
+  // replay metadata for hardened historical reopen — hardened edit replay
+  // reuses the original message row's ratchet coordinates captured when
+  // the original message was first decrypted. See the message-level
+  // "Hardened edit replay contract" comment above.
   bytes new_ratchet_pub = 7;
   int32 new_ratchet_seq = 8;
-  bytes new_tag_inner = 9;  // Doppel-AES inner GCM tag (16 bytes)
-  bytes new_tag_outer = 10; // Doppel-AES outer GCM tag (16 bytes)
+
+  // Legacy Doppel-AES inner GCM tag (pre-composite compatibility, 16 bytes).
+  bytes new_tag_inner = 9;
+  // Outer GCM authentication tag. Used by both the legacy Doppel path
+  // and the canonical composite runtime path (16 bytes).
+  bytes new_tag_outer = 10;
+
+  // ── Canonical composite runtime fields (0x40 / 0x41) ────────────────
+  // `new_iv_inner` and `new_iv_outer` are authoritative sender-produced
+  // composite AES-GCM IVs for the edit payload — they are NOT transport-
+  // only hints, placeholders, or values that may be guessed, derived, or
+  // locally synthesized by receivers. Composite-capable senders MUST
+  // populate:
+  //   new_ciphertext, new_iv_inner, new_iv_outer, new_tag_outer,
+  //   new_signature
+  //
+  // The server relays these fields transparently and does not interpret,
+  // rewrite, or synthesize any of the crypto payload or its metadata.
+  // Receivers MUST use populated composite IVs directly and MUST NOT
+  // derive, guess, or locally synthesize them when they are present on
+  // the wire.
+
+  // Authoritative inner AES-GCM IV produced by the sender for the edit
+  // payload (composite runtime). Receivers MUST use this value directly
+  // when present.
+  bytes new_iv_inner = 11;
+  // Authoritative outer AES-GCM IV produced by the sender for the edit
+  // payload (composite runtime). Receivers MUST use this value directly
+  // when present.
+  bytes new_iv_outer = 12;
+  // Ed25519 signature over the canonical composite edit transcript.
+  // This is NOT an arbitrary repo-local signature; senders MUST sign
+  // the following transcript in this exact order:
+  //
+  //   1. domain prefix: ASCII "kayten-edit-v1"
+  //   2. message_id
+  //   3. conversation_id
+  //   4. edit_seq
+  //   5. new_ratchet_seq
+  //   6. new_ciphertext
+  //   7. new_iv_inner
+  //   8. new_iv_outer
+  //   9. new_tag_outer
+  //
+  // Composite edit receivers MUST require this field and verify it
+  // against the reconstructed transcript using the sender's registered
+  // Ed25519 identity key. If it is empty, malformed, or fails
+  // verification the edit MUST be rejected.
+  // Legacy edit senders MAY leave this field empty.
+  bytes new_signature = 13;
+
+  // ── Hardened-history replay coordinates (P5.1, 2026-04-17) ──────────
+  // Authoritative ratchet coordinates for hardened-history anchor
+  // re-derive on the receiver side. Receivers running in real-HSM mode
+  // with allowLegacyWrappedMessageKeyFallback=false REQUIRE these to
+  // re-derive the original per-message inner key via
+  // HistoryKeyRederiver (nearest counter-0 anchor for
+  // (conversation_id, direction=incoming, edit_ratchet_epoch) +
+  // bounded forward advance to edit_message_counter). The values
+  // match the `ratchetEpoch` and `messageCounter` on the original
+  // message row; edits replay the same inner key, no new chain
+  // advance.
+  //
+  // Rollout:
+  //   - Composite-capable senders (post-2026-04-17) MUST populate both
+  //     fields with the original message row's coords.
+  //   - Pre-2026-04-17 senders omit these; proto3 default values are
+  //     `edit_ratchet_epoch = 0` and `edit_message_counter = 0`.
+  //   - Receivers MUST treat (0, 0) as "absent" during the migration
+  //     window and fall back to the legacy `wrappedMessageKey` path
+  //     via allowLegacyWrappedMessageKeyFallback=true.
+  //   - Once the flag flips to false in hardened production, edits
+  //     that arrive with both fields still at proto3 defaults from
+  //     pre-fix senders MUST fail closed — receivers SHOULD keep the
+  //     pre-edit row visible and surface a "couldn't apply edit" hint.
+  //   - Senders SHALL NOT populate one field and leave the other at
+  //     its proto3 default; both fields are populated together or not
+  //     at all.
+  //
+  // Known edge case (P5.1-review, 2026-04-17): a legitimate first
+  // message of the first epoch has coords
+  // (ratchetEpoch = 0, messageCounter = 0). Because proto3 scalar
+  // defaults also yield (0, 0), the receiver cannot distinguish
+  // "post-fix sender editing the very first message of the
+  // conversation" from "pre-fix sender omitting these fields". The
+  // receiver-side `hasWireCoords = wireEpoch != 0 || wireCounter != 0`
+  // test misclassifies this case as "pre-fix sender".
+  //
+  // Impact: editing the very first message of a conversation with
+  // allowLegacyWrappedMessageKeyFallback = false will fail closed; the
+  // user sees the pre-edit body. The sender can re-send as a new
+  // message. Counter-0 anchors DO seed at epoch 0, so this is a real
+  // (if narrow) corner case — not a purely theoretical concern.
+  //
+  // Mitigation / follow-up: a future proto delta may convert these to
+  // google.protobuf.Int32Value / Int64Value wrappers for unambiguous
+  // absence signaling (wrapper-present ⇒ populated, wrapper-absent ⇒
+  // legacy). Not blocking for the migration window because the
+  // user-visible impact is limited to "edit of the very first message
+  // post-flag-flip" and the fail-closed behavior is correct.
+  int32 edit_ratchet_epoch = 14;
+  int64 edit_message_counter = 15;
 }
 
 // Delete a message for all participants.
