@@ -16,8 +16,33 @@ service DeviceService {
   // Fetch a prekey bundle for initiating a session with a device.
   rpc GetPrekey(GetPrekeyRequest) returns (GetPrekeyResponse);
 
-  // Get the identity key for a device.
-  rpc GetIdentityKey(GetIdentityKeyRequest) returns (GetIdentityKeyResponse);
+  // Strict per-device identity lookup (CAP_WIRE_IDENTITY_V1). The
+  // request's `device_id` MUST resolve to a registered device row —
+  // there is NO user-id fallback, NO "first active device" resolution,
+  // and NO silent substitution. Mismatched / unknown device_ids return
+  // NotFound so the caller can surface a clear error rather than
+  // signing / verifying against the wrong key.
+  //
+  // This RPC is intended for pre-flight enrollment (device attestation,
+  // contact-list bootstrap) — NOT for the message-decrypt path. On the
+  // decrypt path the wire-authoritative `signer_identity_pub` field on
+  // each crypto envelope is the sole source of truth; receivers MUST
+  // NOT round-trip through the server to obtain the signer's pub.
+  //
+  // Replaces the retired `GetIdentityKey` RPC whose handler silently
+  // fell back to the first-active-device-for-user path when direct
+  // lookup failed — see the retired handler comment in
+  // kayten-server/internal/device/handler_grpc.go for the history.
+  rpc GetDeviceIdentityKey(GetDeviceIdentityKeyRequest) returns (GetDeviceIdentityKeyResponse);
+
+  // Enumerate all devices registered under a user_id, including
+  // revoked devices (with `revoked_at` populated). Used by contact
+  // verification UIs that legitimately need per-device fingerprints
+  // for the safety-number workflow — the one legitimate multi-device
+  // read path that the retired GetIdentityKey fallback was covering.
+  // Clients MUST display per-device fingerprints; they MUST NOT blend
+  // them into a single "user fingerprint".
+  rpc ListUserDevices(ListUserDevicesRequest) returns (ListUserDevicesResponse);
 
   // Check attestation status for a device.
   rpc GetAttestationStatus(AttestationRequest) returns (AttestationResponse);
@@ -89,11 +114,13 @@ message GetPrekeyResponse {
   bytes identity_ecdh_pub = 4;
 }
 
-message GetIdentityKeyRequest {
+message GetDeviceIdentityKeyRequest {
+  // Strict per-device identity. MUST be a registered device_id; the
+  // server does NOT resolve user_ids here.
   string device_id = 1;
 }
 
-message GetIdentityKeyResponse {
+message GetDeviceIdentityKeyResponse {
   bytes ed25519_pub = 1;
   bytes ecdh_pub = 2;
   bytes signature = 3;
@@ -106,6 +133,29 @@ message GetIdentityKeyResponse {
   // Populated by `kayten-server` whenever `devices.revoked_at IS NOT NULL`
   // (see master §6a.4 and the `kayten-server-device-wipe-integration` spec).
   google.protobuf.Timestamp revoked_at = 4;
+}
+
+message ListUserDevicesRequest {
+  string user_id = 1;
+  // When true, include revoked devices in the response (with
+  // `revoked_at` populated). Contact-verify UIs should pass true so
+  // users can see former / no-longer-trusted devices alongside active
+  // ones. Default false — most callers only care about active devices.
+  bool include_revoked = 2;
+}
+
+message ListUserDevicesResponse {
+  repeated DeviceIdentity devices = 1;
+}
+
+message DeviceIdentity {
+  string device_id = 1;
+  bytes ed25519_pub = 2;
+  bytes ecdh_pub = 3;
+  string curve_type = 4;
+  google.protobuf.Timestamp created_at = 5;
+  // Populated when the device is revoked; unset on active devices.
+  google.protobuf.Timestamp revoked_at = 6;
 }
 
 message AttestationRequest {
