@@ -200,6 +200,12 @@ Major cross-repo workstreams currently in flight:
   boundaries + DH4 protocol additions.
 - `2026-04-18-two-phase-provisioning-cross-repo-spec.md` — two-phase HSM
   provisioning protocol.
+- `2026-04-20-cross-repo-wire-identity-v1-spec.md` — wire-authoritative
+  signer identity. Adds `signer_identity_pub` (32-byte Ed25519) to
+  `SendMessage` / `ReceiveMessage` / `EditMessage` / `GroupSenderKey`;
+  retires `DeviceService.GetIdentityKey` (silent user-id fallback was
+  the root cause of multi-device decrypt failures); replaces it with
+  strict `GetDeviceIdentityKey` + per-user `ListUserDevices`.
 
 Read the relevant spec before editing an affected proto — the specs carry
 the rationale and cross-repo coordination requirements that never fit in a
