@@ -206,6 +206,12 @@ Major cross-repo workstreams currently in flight:
   retires `DeviceService.GetIdentityKey` (silent user-id fallback was
   the root cause of multi-device decrypt failures); replaces it with
   strict `GetDeviceIdentityKey` + per-user `ListUserDevices`.
+- `2026-04-20-wire-identity-v1-completion-spec.md` (repo root of the
+  workspace at `/Users/tahir/Repos/`) — completion plan that extends
+  the baseline with the explicit `SERVER_CAPABILITY_WIRE_IDENTITY_V1`
+  advertisement on `AuthTokenResponse`, the kayten-app TOFU identity
+  cache + `KEY_CHANGE_ALERT` UI, remaining `getIdentityKey` callsite
+  migrations, and the full kayten-app-v2 (Rust + native) port.
 
 Read the relevant spec before editing an affected proto — the specs carry
 the rationale and cross-repo coordination requirements that never fit in a

@@ -20,3 +20,29 @@ message ErrorResponse {
   string code = 1;
   string message = 2;
 }
+
+// Server-advertised capability flags.
+//
+// Advertised on the `capabilities` field of every `AuthTokenResponse`
+// (both `VerifyCode` and `RefreshToken` return paths). Clients MUST
+// refuse to boot against a server whose capabilities do not include the
+// minimum set required for the client's wire contract. Adding a new
+// capability is always additive; retiring one is a breaking change and
+// requires a `v2` package cut per the repo's wire-format stability rule.
+enum ServerCapability {
+  SERVER_CAPABILITY_UNSPECIFIED = 0;
+
+  // Wire-authoritative signer identity. When advertised, the server:
+  //   (1) persists and relays `signer_identity_pub` verbatim on every
+  //       composite envelope (SendMessage, ReceiveMessage, EditMessage,
+  //       GroupSenderKey);
+  //   (2) rejects composite envelopes with a missing or non-32-byte
+  //       `signer_identity_pub` at ingress (`InvalidArgument`);
+  //   (3) exposes strict `DeviceService.GetDeviceIdentityKey` and
+  //       per-user `DeviceService.ListUserDevices` and does NOT expose
+  //       the retired `GetIdentityKey` RPC.
+  // Clients that depend on wire-provided signer identity MUST refuse to
+  // run against a server that does not advertise this bit — see
+  // `docs/superpowers/plans/2026-04-20-cross-repo-wire-identity-v1-spec.md`.
+  SERVER_CAPABILITY_WIRE_IDENTITY_V1 = 1;
+}

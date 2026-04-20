@@ -4,6 +4,8 @@ package kayten.v1;
 
 option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
 
+import "kayten/v1/common.proto";
+
 service AuthService {
   // Request SMS verification code for phone number.
   rpc RequestVerification(VerificationRequest) returns (VerificationResponse);
@@ -101,6 +103,17 @@ message AuthTokenResponse {
   string user_id = 3;
   string device_id = 4;
   int64 expires_at = 5;
+
+  // Capability bits advertised by this server build. Clients MUST refuse
+  // to boot when a capability they require is absent — see
+  // `ServerCapability` in `common.proto` and
+  // `docs/superpowers/plans/2026-04-20-wire-identity-v1-completion-spec.md`.
+  //
+  // Populated on every successful `VerifyCode` and `RefreshToken`
+  // response. An empty list indicates a pre-capability-gate server
+  // build; capability-requiring clients treat that as "server upgrade
+  // required" and surface the condition to the user.
+  repeated ServerCapability capabilities = 6;
 }
 
 message RefreshRequest {
