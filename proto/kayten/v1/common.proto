@@ -45,4 +45,20 @@ enum ServerCapability {
   // run against a server that does not advertise this bit — see
   // `docs/superpowers/plans/2026-04-20-cross-repo-wire-identity-v1-spec.md`.
   SERVER_CAPABILITY_WIRE_IDENTITY_V1 = 1;
+
+  // Identity commit state machine (2026-04-21 HSM identity regeneration
+  // spec §3.1 P1-P7). When advertised, the server:
+  //   (1) persists `identity_commit_epoch` and `identity_commit_state` on
+  //       every RegisterIdentityKey and cross-checks them on rotation;
+  //   (2) writes a `device_identity_rotations` audit row for every
+  //       rotation accepted under a non-first-commit auth_method;
+  //   (3) rejects un-attested rotations with `ErrRotationAuthRequired`
+  //       once the per-deploy `graceAcceptLegacy` flag has been flipped
+  //       to false (Phase 5 of the spec's rollout plan);
+  //   (4) exposes `LinkingAttestation`-based rotation and
+  //       `account_recovery_token` bypass paths per §4.7.
+  // Clients that depend on epoch-level identity pinning MUST refuse to
+  // boot against a server that does not advertise this bit — see
+  // `docs/superpowers/plans/2026-04-21-hsm-identity-regeneration-bug-report-and-fix-spec.md`.
+  SERVER_CAPABILITY_IDENTITY_COMMIT_V1 = 2;
 }
