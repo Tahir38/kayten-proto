@@ -16,8 +16,33 @@ service DeviceService {
   // Fetch a prekey bundle for initiating a session with a device.
   rpc GetPrekey(GetPrekeyRequest) returns (GetPrekeyResponse);
 
-  // Get the identity key for a device.
-  rpc GetIdentityKey(GetIdentityKeyRequest) returns (GetIdentityKeyResponse);
+  // Strict per-device identity lookup (CAP_WIRE_IDENTITY_V1). The
+  // request's `device_id` MUST resolve to a registered device row —
+  // there is NO user-id fallback, NO "first active device" resolution,
+  // and NO silent substitution. Mismatched / unknown device_ids return
+  // NotFound so the caller can surface a clear error rather than
+  // signing / verifying against the wrong key.
+  //
+  // This RPC is intended for pre-flight enrollment (device attestation,
+  // contact-list bootstrap) — NOT for the message-decrypt path. On the
+  // decrypt path the wire-authoritative `signer_identity_pub` field on
+  // each crypto envelope is the sole source of truth; receivers MUST
+  // NOT round-trip through the server to obtain the signer's pub.
+  //
+  // Replaces the retired `GetIdentityKey` RPC whose handler silently
+  // fell back to the first-active-device-for-user path when direct
+  // lookup failed — see the retired handler comment in
+  // kayten-server/internal/device/handler_grpc.go for the history.
+  rpc GetDeviceIdentityKey(GetDeviceIdentityKeyRequest) returns (GetDeviceIdentityKeyResponse);
+
+  // Enumerate all devices registered under a user_id, including
+  // revoked devices (with `revoked_at` populated). Used by contact
+  // verification UIs that legitimately need per-device fingerprints
+  // for the safety-number workflow — the one legitimate multi-device
+  // read path that the retired GetIdentityKey fallback was covering.
+  // Clients MUST display per-device fingerprints; they MUST NOT blend
+  // them into a single "user fingerprint".
+  rpc ListUserDevices(ListUserDevicesRequest) returns (ListUserDevicesResponse);
 
   // Check attestation status for a device.
   rpc GetAttestationStatus(AttestationRequest) returns (AttestationResponse);
@@ -48,6 +73,91 @@ service DeviceService {
   rpc RevokeDeviceByCapability(RevokeDeviceByCapabilityRequest) returns (RevokeDeviceByCapabilityResponse);
 }
 
+// Identity commit lifecycle (2026-04-21 HSM identity regeneration spec
+// §4.1). The firmware's `Kayten_Mobile_RuntimeStateBlock` persists this
+// value in NVM. Host forwards it verbatim on the probe response and on
+// every `RegisterIdentityKeyRequest`. Server records it in `devices`
+// and `device_identity_rotations`.
+enum IdentityCommitState {
+  // Field absent or uninitialised. Treated as legacy / pre-spec on
+  // the server; the client is expected to fail fast against a server
+  // without `SERVER_CAPABILITY_IDENTITY_COMMIT_V1`.
+  IDENTITY_COMMIT_STATE_UNSPECIFIED = 0;
+
+  // HSM has never been provisioned. First `PROVISION_DEVICE_V1` will
+  // transition to COMMITTED (epoch=1). Host probe returns this when
+  // the firmware's NVM block is absent or freshly-zeroed.
+  IDENTITY_COMMIT_STATE_UNCOMMITTED = 1;
+
+  // HSM has a committed identity in slots 22/23 and a monotonic
+  // `identity_commit_epoch`. Every further `PROVISION_DEVICE_V1` is
+  // refused with `ALREADY_PROVISIONED` until a wipe transition.
+  IDENTITY_COMMIT_STATE_COMMITTED = 2;
+
+  // HSM has been wiped (via the `0x68` + `0x65` + `0x44` chain) and is
+  // awaiting re-provisioning. A subsequent `PROVISION_DEVICE_V1`
+  // transitions to COMMITTED with `epoch++`. Server treats rotation
+  // from this state as a legitimate re-provision (not a silent
+  // regeneration), provided the authenticated gRPC session proves the
+  // user.
+  IDENTITY_COMMIT_STATE_WIPED = 3;
+}
+
+// Signed proof that a rotation request originates from a device that
+// another device of the same user has attested. Used on the
+// `RegisterIdentityKeyRequest.linking_attestation` field so the server
+// can accept a rotation under `AuthMethod.linking_attestation` without
+// an SMS re-verify (spec §4.7, `validateRotationAuth` linking branch).
+//
+// Transcript signed by the linker device's Ed25519 identity key:
+//
+//   "kayten-link-attestation-v1" || SEP(0x00)
+//     || linker_device_id (UTF-8 bytes)       || SEP(0x00)
+//     || target_device_id (UTF-8 bytes)       || SEP(0x00)
+//     || target_identity_pub (32 bytes)       || SEP(0x00)
+//     || issued_at_unix_ms (uint64 LE, 8 B)   || SEP(0x00)
+//     || nonce (32 bytes)
+//
+// SEP is a single 0x00 byte. Binary fields are included verbatim; the
+// UTF-8 bytes of the string identifiers are included exactly as they
+// appear in the `linker_device_id` / `target_device_id` fields so the
+// verifier reconstructs the transcript without ambiguity.
+message LinkingAttestation {
+  // Device that is attesting this rotation. Must belong to the same
+  // user as the target device, be unrevoked at attestation issue time,
+  // and have `can_attest == true` at server-side validation time.
+  string linker_device_id = 1;
+
+  // Device whose identity is rotating. MUST match
+  // `RegisterIdentityKeyRequest.device_id` in the enclosing request.
+  // Servers that implement `SERVER_CAPABILITY_IDENTITY_COMMIT_V1` reject
+  // mismatches with the generic `InvalidArgument` gRPC status; see the
+  // error taxonomy in the 2026-04-21 HSM identity regen spec §4.7.
+  string target_device_id = 2;
+
+  // Proposed new identity pub of the target device. MUST match
+  // `RegisterIdentityKeyRequest.ed25519_pub` in the enclosing request
+  // byte-for-byte. Servers that implement `SERVER_CAPABILITY_IDENTITY_COMMIT_V1`
+  // reject mismatches with the generic `InvalidArgument` gRPC status; see
+  // the error taxonomy in the 2026-04-21 HSM identity regen spec §4.7.
+  bytes target_identity_pub = 3;
+
+  // Millisecond UNIX timestamp at which the linker signed this blob.
+  // Server rejects if older than 5 minutes or in the future by more
+  // than 60 seconds (clock-skew tolerance).
+  int64 issued_at_unix_ms = 4;
+
+  // 32 bytes of linker-supplied entropy. Server records the nonce on
+  // acceptance and rejects any replay of the same nonce (global across
+  // users, per spec §4.7 item (f)).
+  bytes nonce = 5;
+
+  // Ed25519 signature over the transcript above, produced by the
+  // linker device's identity key in HSM slot 22. Server verifies
+  // against the linker's `devices.ed25519_pub` stored column.
+  bytes signature = 6;
+}
+
 message Prekey {
   int32 prekey_id = 1;
   bytes ecdh_pub = 2;
@@ -62,6 +172,29 @@ message RegisterIdentityKeyRequest {
   bytes ecdh_pub = 3;
   bytes signature = 4;
   string curve_type = 5;
+
+  // Monotonic commit epoch (2026-04-21 HSM identity regen spec §4.1).
+  // Firmware persists this in NVM; host surfaces it on the probe; app
+  // threads it through here. First-commit request carries `1`. Absent
+  // / 0 on pre-delta clients — the server treats that as legacy and
+  // routes through grace-accept mode if enabled.
+  uint32 identity_commit_epoch = 6;
+
+  // Current firmware-reported commit state. Servers with
+  // `SERVER_CAPABILITY_IDENTITY_COMMIT_V1` require this to be
+  // `IDENTITY_COMMIT_STATE_COMMITTED` for every accepted registration.
+  // `UNSPECIFIED` is treated as legacy (grace-accept). `UNCOMMITTED`
+  // / `WIPED` at registration time is a wire-level error: the firmware
+  // should have advanced to `COMMITTED` by the time the app ships the
+  // request.
+  IdentityCommitState identity_commit_state = 7;
+
+  // Present only when rotation auth is `linking_attestation` per spec
+  // §4.7 validateRotationAuth branch 1. Absent for first-commits,
+  // no-rotation metadata refreshes, SMS-reverify paths, and recovery-
+  // token paths. Server ignores this field when the incoming request
+  // would have been accepted under a simpler auth_method.
+  LinkingAttestation linking_attestation = 8;
 }
 
 message RegisterIdentityKeyResponse {
@@ -89,11 +222,13 @@ message GetPrekeyResponse {
   bytes identity_ecdh_pub = 4;
 }
 
-message GetIdentityKeyRequest {
+message GetDeviceIdentityKeyRequest {
+  // Strict per-device identity. MUST be a registered device_id; the
+  // server does NOT resolve user_ids here.
   string device_id = 1;
 }
 
-message GetIdentityKeyResponse {
+message GetDeviceIdentityKeyResponse {
   bytes ed25519_pub = 1;
   bytes ecdh_pub = 2;
   bytes signature = 3;
@@ -106,6 +241,41 @@ message GetIdentityKeyResponse {
   // Populated by `kayten-server` whenever `devices.revoked_at IS NOT NULL`
   // (see master §6a.4 and the `kayten-server-device-wipe-integration` spec).
   google.protobuf.Timestamp revoked_at = 4;
+}
+
+message ListUserDevicesRequest {
+  string user_id = 1;
+  // When true, include revoked devices in the response (with
+  // `revoked_at` populated). Contact-verify UIs should pass true so
+  // users can see former / no-longer-trusted devices alongside active
+  // ones. Default false — most callers only care about active devices.
+  bool include_revoked = 2;
+}
+
+message ListUserDevicesResponse {
+  repeated DeviceIdentity devices = 1;
+}
+
+message DeviceIdentity {
+  string device_id = 1;
+  bytes ed25519_pub = 2;
+  bytes ecdh_pub = 3;
+  string curve_type = 4;
+  google.protobuf.Timestamp created_at = 5;
+  // Populated when the device is revoked; unset on active devices.
+  google.protobuf.Timestamp revoked_at = 6;
+
+  // Current commit epoch from the server's record for this device.
+  // Populated by servers with `SERVER_CAPABILITY_IDENTITY_COMMIT_V1`;
+  // zero on legacy servers. Consumers use this alongside
+  // `created_at` to display rotation history in contact-verify UIs.
+  uint32 identity_commit_epoch = 7;
+
+  // Current commit state (COMMITTED on active devices; WIPED on
+  // devices that are pending re-provision; UNCOMMITTED never
+  // appears here because a device with no identity is never in
+  // ListUserDevices results).
+  IdentityCommitState identity_commit_state = 8;
 }
 
 message AttestationRequest {

@@ -291,6 +291,57 @@ message SendMessage {
   // state from these fields before decrypting `ciphertext`.
   // Server relays this field transparently.
   PrekeyBootstrap prekey_bootstrap = 20;
+
+  // Client-generated idempotency key for at-most-once server-side delivery.
+  //
+  // The sending device picks a stable UUID-v4 per logical outgoing message,
+  // persists it alongside the local Drift/SwiftData/Room row, and carries
+  // the SAME value on every WebSocket re-send of that message — including
+  // the offline-queue drain after a reconnect and any explicit user retry.
+  //
+  // Server contract (kayten-server-client-msg-id-dedup-spec §2):
+  //   * `(sender_device_id, client_msg_id)` is UNIQUE on the server's
+  //     messages table. A second SendMessage carrying a pair the server
+  //     has already persisted does NOT insert a new row and does NOT
+  //     re-fan-out to recipients — the server re-emits the ORIGINAL
+  //     MessageAck (same server-assigned `message_id`, same `server_seq`,
+  //     same `timestamp`) so clients converge on one delivery regardless
+  //     of how many retry acks they've already lost.
+  //   * Empty value ⇒ legacy sender, no dedup. The row is inserted
+  //     unconditionally (pre-2026-04-19 behaviour). Rollout-compatible.
+  //
+  // Privacy: the server stores this string but never inspects or indexes
+  // it beyond the UNIQUE constraint — it is treated as an opaque client
+  // correlation id. Senders SHOULD use a random UUID-v4 rather than any
+  // value derived from plaintext.
+  string client_msg_id = 21;
+
+  // ── Wire-authoritative signer identity (CAP_WIRE_IDENTITY_V1) ────────
+  // Ed25519 public key (32 bytes, raw) of the device that signed the
+  // composite transcript in `signature`. MANDATORY for every
+  // composite-capable sender post-CAP_WIRE_IDENTITY_V1.
+  //
+  // Receivers MUST use this wire-provided pub as the sole verifier for
+  // the composite signature. Receivers MUST NOT fall back to any server
+  // lookup (DeviceService.GetDeviceIdentityKey is for pre-flight
+  // enrollment only; the receive path trusts the wire exclusively).
+  // Receivers MUST reject the envelope with InvalidArgument when this
+  // field is empty OR when its length is not exactly 32 bytes.
+  //
+  // Replaces the silent "first active device for user" fallback that
+  // previously lived in DeviceService.GetIdentityKey — see the retired
+  // handler comment in kayten-server/internal/device/handler_grpc.go
+  // and the 2026-04-16 voice-call signer_identity_pub fix for the same
+  // pattern on calling envelopes.
+  //
+  // The server SHOULD additionally validate `signer_identity_pub` at
+  // ingress by comparing against `sender_device_id`'s registered
+  // identity row; a mismatch is FailedPrecondition. This closes the
+  // otherwise-open "compromised sender claims a different device's
+  // identity" attack.
+  //
+  // The server relays this field transparently into `ReceiveMessage`.
+  bytes signer_identity_pub = 22;
 }
 
 message ReceiveMessage {
@@ -390,6 +441,13 @@ message ReceiveMessage {
   // Authoritative outer AES-GCM IV produced by the sender (composite
   // runtime). Receivers MUST use this value directly when present.
   bytes iv_outer = 24;
+
+  // Wire-authoritative signing identity (CAP_WIRE_IDENTITY_V1).
+  // Relayed verbatim from `SendMessage.signer_identity_pub`. See the
+  // field's docblock on `SendMessage` for the full contract.
+  // Receivers MUST verify the composite signature against this key
+  // and MUST NOT fall back to any server lookup.
+  bytes signer_identity_pub = 25;
 }
 
 message MessageAck {
@@ -564,6 +622,14 @@ message GroupSenderKey {
   bytes iv_inner = 13;
   // Outer AES-GCM IV (composite runtime).
   bytes iv_outer = 14;
+
+  // Wire-authoritative signing identity (CAP_WIRE_IDENTITY_V1).
+  // Ed25519 public key (32 bytes, raw) of the sender device. MANDATORY
+  // for every composite-capable sender. Receivers MUST verify the
+  // composite signature against this wire-provided pub and MUST NOT
+  // fall back to any server-side identity lookup. See the
+  // SendMessage.signer_identity_pub docblock for the full contract.
+  bytes signer_identity_pub = 15;
 }
 
 // SkdmPayload is the plaintext carried inside GroupSenderKey.ciphertext.
@@ -774,6 +840,15 @@ message EditMessage {
   // post-flag-flip" and the fail-closed behavior is correct.
   int32 edit_ratchet_epoch = 14;
   int64 edit_message_counter = 15;
+
+  // Wire-authoritative signing identity (CAP_WIRE_IDENTITY_V1).
+  // Ed25519 public key (32 bytes, raw) of the device that produced
+  // `new_signature`. MANDATORY for every composite-capable sender
+  // post-CAP_WIRE_IDENTITY_V1. Receivers MUST verify `new_signature`
+  // against this wire-provided pub and MUST NOT fall back to any
+  // server-side identity lookup. See the SendMessage.signer_identity_pub
+  // docblock for the full contract.
+  bytes signer_identity_pub = 16;
 }
 
 // Delete a message for all participants.
