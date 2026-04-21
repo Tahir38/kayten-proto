@@ -260,6 +260,18 @@ message DeviceIdentity {
   google.protobuf.Timestamp created_at = 5;
   // Populated when the device is revoked; unset on active devices.
   google.protobuf.Timestamp revoked_at = 6;
+
+  // Current commit epoch from the server's record for this device.
+  // Populated by servers with `SERVER_CAPABILITY_IDENTITY_COMMIT_V1`;
+  // zero on legacy servers. Consumers use this alongside
+  // `created_at` to display rotation history in contact-verify UIs.
+  uint32 identity_commit_epoch = 7;
+
+  // Current commit state (COMMITTED on active devices; WIPED on
+  // devices that are pending re-provision; UNCOMMITTED never
+  // appears here because a device with no identity is never in
+  // ListUserDevices results).
+  IdentityCommitState identity_commit_state = 8;
 }
 
 message AttestationRequest {
