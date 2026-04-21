@@ -73,6 +73,36 @@ service DeviceService {
   rpc RevokeDeviceByCapability(RevokeDeviceByCapabilityRequest) returns (RevokeDeviceByCapabilityResponse);
 }
 
+// Identity commit lifecycle (2026-04-21 HSM identity regeneration spec
+// §4.1). The firmware's `Kayten_Mobile_RuntimeStateBlock` persists this
+// value in NVM. Host forwards it verbatim on the probe response and on
+// every `RegisterIdentityKeyRequest`. Server records it in `devices`
+// and `device_identity_rotations`.
+enum IdentityCommitState {
+  // Field absent or uninitialised. Treated as legacy / pre-spec on
+  // the server; the client is expected to fail fast against a server
+  // without `SERVER_CAPABILITY_IDENTITY_COMMIT_V1`.
+  IDENTITY_COMMIT_STATE_UNSPECIFIED = 0;
+
+  // HSM has never been provisioned. First `PROVISION_DEVICE_V1` will
+  // transition to COMMITTED (epoch=1). Host probe returns this when
+  // the firmware's NVM block is absent or freshly-zeroed.
+  IDENTITY_COMMIT_STATE_UNCOMMITTED = 1;
+
+  // HSM has a committed identity in slots 22/23 and a monotonic
+  // `identity_commit_epoch`. Every further `PROVISION_DEVICE_V1` is
+  // refused with `ALREADY_PROVISIONED` until a wipe transition.
+  IDENTITY_COMMIT_STATE_COMMITTED = 2;
+
+  // HSM has been wiped (via the `0x68` + `0x65` + `0x44` chain) and is
+  // awaiting re-provisioning. A subsequent `PROVISION_DEVICE_V1`
+  // transitions to COMMITTED with `epoch++`. Server treats rotation
+  // from this state as a legitimate re-provision (not a silent
+  // regeneration), provided the authenticated gRPC session proves the
+  // user.
+  IDENTITY_COMMIT_STATE_WIPED = 3;
+}
+
 message Prekey {
   int32 prekey_id = 1;
   bytes ecdh_pub = 2;
