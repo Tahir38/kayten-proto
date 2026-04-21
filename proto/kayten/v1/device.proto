@@ -103,6 +103,57 @@ enum IdentityCommitState {
   IDENTITY_COMMIT_STATE_WIPED = 3;
 }
 
+// Signed proof that a rotation request originates from a device that
+// another device of the same user has attested. Used on the
+// `RegisterIdentityKeyRequest.linking_attestation` field so the server
+// can accept a rotation under `AuthMethod.linking_attestation` without
+// an SMS re-verify (spec §4.7, `validateRotationAuth` linking branch).
+//
+// Transcript signed by the linker device's Ed25519 identity key:
+//
+//   "kayten-link-attestation-v1" || SEP(0x00)
+//     || linker_device_id (UTF-8 bytes)       || SEP(0x00)
+//     || target_device_id (UTF-8 bytes)       || SEP(0x00)
+//     || target_identity_pub (32 bytes)       || SEP(0x00)
+//     || issued_at_unix_ms (uint64 LE, 8 B)   || SEP(0x00)
+//     || nonce (32 bytes)
+//
+// SEP is a single 0x00 byte. Binary fields are included verbatim; the
+// UTF-8 bytes of the string identifiers are included exactly as they
+// appear in the `linker_device_id` / `target_device_id` fields so the
+// verifier reconstructs the transcript without ambiguity.
+message LinkingAttestation {
+  // Device that is attesting this rotation. Must belong to the same
+  // user as the target device, be unrevoked at attestation issue time,
+  // and have `can_attest == true` at server-side validation time.
+  string linker_device_id = 1;
+
+  // Device whose identity is rotating. MUST match
+  // `RegisterIdentityKeyRequest.device_id` in the enclosing request
+  // or the server returns `ErrAttesterWrongTarget`.
+  string target_device_id = 2;
+
+  // Proposed new identity pub of the target device. MUST match
+  // `RegisterIdentityKeyRequest.ed25519_pub` in the enclosing request
+  // byte-for-byte; otherwise server returns `ErrAttestationMismatch`.
+  bytes target_identity_pub = 3;
+
+  // Millisecond UNIX timestamp at which the linker signed this blob.
+  // Server rejects if older than 5 minutes or in the future by more
+  // than 60 seconds (clock-skew tolerance).
+  int64 issued_at_unix_ms = 4;
+
+  // 32 bytes of linker-supplied entropy. Server records the nonce on
+  // acceptance and rejects any replay of the same nonce (global across
+  // users, per spec §4.7 item (f)).
+  bytes nonce = 5;
+
+  // Ed25519 signature over the transcript above, produced by the
+  // linker device's identity key in HSM slot 22. Server verifies
+  // against the linker's `devices.ed25519_pub` stored column.
+  bytes signature = 6;
+}
+
 message Prekey {
   int32 prekey_id = 1;
   bytes ecdh_pub = 2;
