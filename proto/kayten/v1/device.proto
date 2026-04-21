@@ -129,13 +129,17 @@ message LinkingAttestation {
   string linker_device_id = 1;
 
   // Device whose identity is rotating. MUST match
-  // `RegisterIdentityKeyRequest.device_id` in the enclosing request
-  // or the server returns `ErrAttesterWrongTarget`.
+  // `RegisterIdentityKeyRequest.device_id` in the enclosing request.
+  // Servers that implement `SERVER_CAPABILITY_IDENTITY_COMMIT_V1` reject
+  // mismatches with the generic `InvalidArgument` gRPC status; see the
+  // error taxonomy in the 2026-04-21 HSM identity regen spec §4.7.
   string target_device_id = 2;
 
   // Proposed new identity pub of the target device. MUST match
   // `RegisterIdentityKeyRequest.ed25519_pub` in the enclosing request
-  // byte-for-byte; otherwise server returns `ErrAttestationMismatch`.
+  // byte-for-byte. Servers that implement `SERVER_CAPABILITY_IDENTITY_COMMIT_V1`
+  // reject mismatches with the generic `InvalidArgument` gRPC status; see
+  // the error taxonomy in the 2026-04-21 HSM identity regen spec §4.7.
   bytes target_identity_pub = 3;
 
   // Millisecond UNIX timestamp at which the linker signed this blob.
