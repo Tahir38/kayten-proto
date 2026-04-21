@@ -168,6 +168,29 @@ message RegisterIdentityKeyRequest {
   bytes ecdh_pub = 3;
   bytes signature = 4;
   string curve_type = 5;
+
+  // Monotonic commit epoch (2026-04-21 HSM identity regen spec §4.1).
+  // Firmware persists this in NVM; host surfaces it on the probe; app
+  // threads it through here. First-commit request carries `1`. Absent
+  // / 0 on pre-delta clients — the server treats that as legacy and
+  // routes through grace-accept mode if enabled.
+  uint32 identity_commit_epoch = 6;
+
+  // Current firmware-reported commit state. Servers with
+  // `SERVER_CAPABILITY_IDENTITY_COMMIT_V1` require this to be
+  // `IDENTITY_COMMIT_STATE_COMMITTED` for every accepted registration.
+  // `UNSPECIFIED` is treated as legacy (grace-accept). `UNCOMMITTED`
+  // / `WIPED` at registration time is a wire-level error: the firmware
+  // should have advanced to `COMMITTED` by the time the app ships the
+  // request.
+  IdentityCommitState identity_commit_state = 7;
+
+  // Present only when rotation auth is `linking_attestation` per spec
+  // §4.7 validateRotationAuth branch 1. Absent for first-commits,
+  // no-rotation metadata refreshes, SMS-reverify paths, and recovery-
+  // token paths. Server ignores this field when the incoming request
+  // would have been accepted under a simpler auth_method.
+  LinkingAttestation linking_attestation = 8;
 }
 
 message RegisterIdentityKeyResponse {
