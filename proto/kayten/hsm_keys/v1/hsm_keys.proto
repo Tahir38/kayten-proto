@@ -174,6 +174,11 @@ enum MobileCommandId {
   // DEV firmware only — PROD omits handler; prod boards return 0xE0.
   MOBILE_COMMAND_ID_DEV_SET_INIT_PIN_V1        = 103; // 0x67
   MOBILE_COMMAND_ID_REQUEST_WIPE_CHALLENGE_V1  = 104; // 0x68 — master §5.8
+
+  // Identity-commit recovery (2026-04-21 identity-regen spec §5.6).
+  // Pre-auth. COMMITTED → SPI_MOBILE_STATUS_ALREADY_COMMITTED (0xF8);
+  // UNCOMMITTED/WIPED → OK (bootstrap allowed in next PROVISION_DEVICE_V1).
+  MOBILE_COMMAND_ID_REQUEST_IDENTITY_RECOVERY_V1 = 0x6C;
 }
 
 // Runtime provisioning state as reported in `GET_RUNTIME_STATUS_V1` (§5.7)
