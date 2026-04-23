@@ -6,7 +6,8 @@ option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v
 
 // ── Voice mode contract ─────────────────────────────────────────────────
 // Production voice supports two user-selectable modes, both defined in
-// the authoritative system solution spec:
+// the authoritative system solution spec. As of v2026-04-23, wire format
+// uses canonical single-character codes (see BREAKING CHANGE note below).
 //
 //   - "B" / Balanced Mode B (DEFAULT selected product mode):
 //       HSM-authenticated call agreement; HSM-derived call-scoped epoch
@@ -26,12 +27,19 @@ option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v
 //   - "B"       → Balanced Mode B
 //   - "A"       → Strict Mode A
 //   - empty     → invalid / unspecified; production senders MUST set
-//                 an explicit mode and receivers MUST fail closed
-//                 instead of silently downgrading.
+//                 an explicit mode. Receivers MUST fail closed (send
+//                 CALL_HANGUP or equivalent) instead of silently
+//                 downgrading to a default or software-only crypto.
+//
+// BREAKING CHANGE (v2026-04-23): The legacy wire values "mode_a" and "mode_b"
+// are no longer accepted as of this commit. Only canonical "A" and "B" are valid.
+// Senders using the old format will receive a validation error from the server.
+// Update your clients to send canonical values.
 //
 // Both peers MUST agree on the negotiated mode before the call begins;
-// if negotiation cannot converge on a mutually supported mode, the call
-// MUST fail closed.
+// mode is locked at call initiation (before answer) and mid-call mode
+// changes are not supported. If negotiation cannot converge on a
+// mutually supported mode, the call MUST fail closed.
 //
 // The server relays `voice_mode`, `voice_ecdh_pub`, `voice_ecdh_sig`,
 // DTLS fingerprints, ICE candidates, and rekey metadata opaquely and
