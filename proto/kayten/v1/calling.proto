@@ -8,7 +8,7 @@ option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v
 // Production voice supports two user-selectable modes, both defined in
 // the authoritative system solution spec:
 //
-//   - "mode_b" / Balanced Mode B (DEFAULT selected product mode):
+//   - "B" / Balanced Mode B (DEFAULT selected product mode):
 //       HSM-authenticated call agreement; HSM-derived call-scoped epoch
 //       state; native-engine frame crypto using bounded, native-only
 //       active-call epoch material (never surfaced to Dart/UI
@@ -16,18 +16,18 @@ option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v
 //       `CallVoiceRekey.epoch_id` carries the authoritative Mode B
 //       epochIndex (see that field for the full contract).
 //
-//   - "mode_a" / Strict Mode A (stricter selectable profile):
+//   - "A" / Strict Mode A (stricter selectable profile):
 //       HSM-authenticated call agreement; per-frame encrypt/decrypt
 //       through dedicated HSM frame commands; no plaintext voice key
 //       material in Android/app memory; mandatory teardown/zeroization.
 //
 // Wire semantics of the `voice_mode` string field on `CallOffer` /
 // `CallAnswer`:
-//   - "mode_b"  → Balanced Mode B (default)
-//   - "mode_a"  → Strict Mode A
-//   - empty     → legacy / unspecified; production receivers MUST
-//                 treat absence as "no selection signalled" and SHALL
-//                 NOT silently downgrade to software-only crypto.
+//   - "B"       → Balanced Mode B
+//   - "A"       → Strict Mode A
+//   - empty     → invalid / unspecified; production senders MUST set
+//                 an explicit mode and receivers MUST fail closed
+//                 instead of silently downgrading.
 //
 // Both peers MUST agree on the negotiated mode before the call begins;
 // if negotiation cannot converge on a mutually supported mode, the call
@@ -47,8 +47,8 @@ message CallOffer {
   bytes signer_identity_pub = 6;
   bytes voice_ecdh_pub = 7;
   // Selected voice mode for this call; see the "Voice mode contract"
-  // docblock at the top of this file. Values: "mode_b" (default Balanced
-  // Mode B), "mode_a" (Strict Mode A), or empty (unspecified).
+  // docblock at the top of this file. Canonical values: "B" (Balanced
+  // Mode B) or "A" (Strict Mode A). Empty is invalid in production.
   string voice_mode = 8;
   // Server-populated TURN credentials for the recipient.
   string turn_username = 9;
@@ -65,8 +65,8 @@ message CallAnswer {
   bytes signer_identity_pub = 5;
   bytes voice_ecdh_pub = 6;
   // Selected voice mode for this call; see the "Voice mode contract"
-  // docblock at the top of this file. Values: "mode_b" (default Balanced
-  // Mode B), "mode_a" (Strict Mode A), or empty (unspecified).
+  // docblock at the top of this file. Canonical values: "B" (Balanced
+  // Mode B) or "A" (Strict Mode A). Empty is invalid in production.
   string voice_mode = 7;
   // Server-populated TURN credentials for the caller.
   string turn_username = 8;
