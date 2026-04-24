@@ -1,0 +1,32 @@
+{
+  "description": "Canonical golden vector for IdentityRegistrationProof v1 (kayten-proto docs/canonical-transcript-encoder-v1.md).",
+  "digest_hex": "0025c6ae7e2b6dcc0eaa3c4ca0102edaff361fad57b26c4c53f9bdbbdbf9024d",
+  "domain_tag_hex": "40547e31bafc49be8ae9f98e821b4dcce0e8ebea336ec0c0b653e0ced525e4d6",
+  "encoder_version": "canonical-transcript-encoder-v1",
+  "inputs": {
+    "client_nonce_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+    "commit_epoch": 1,
+    "commit_state": 2,
+    "device_id": "device-0000000000000000000000001",
+    "ecdh_identity_priv_scalar_hex_test_only": "2222222222222222222222222222222222222222222222222222222222222222",
+    "ecdh_identity_pub_hex": "04d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c91285",
+    "ed25519_identity_priv_seed_hex_test_only": "1111111111111111111111111111111111111111111111111111111111111111",
+    "ed25519_identity_pub_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+    "hsm_serial": "HSMSN-TEST-0001",
+    "issued_at_unix_ms": 1745000000000,
+    "phone_binding_id": "pb-00000000-0000-4000-8000-000000000001",
+    "server_nonce_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "user_id": "user-0000000000000000000000000001"
+  },
+  "notes": [
+    "Domain tag is sha256(\"kayten-identity-registration-v1\") = 40547e31...e4d6.",
+    "Every variable-length field is preceded by a 4-byte big-endian length.",
+    "Integers are big-endian, unsigned unless noted (issued_at_unix_ms is two's-complement int64).",
+    "The Ed25519 signature is over sha256(transcript), not over the raw transcript.",
+    "Private-key fields in this vector are TEST-ONLY and are intentionally shipped so downstream repos can reproduce the signature. They MUST NOT be reused for production identity."
+  ],
+  "purpose": "kayten-identity-registration-v1",
+  "signature_hex": "953f51699d7b967930ea0eb391f61805457342411f4ff59a7d011b37c144fd9c8928e2de94a8d7bf25ad2e7841217ab61d0acadd16483099cddd93a45d91a303",
+  "transcript_hex": "40547e31bafc49be8ae9f98e821b4dcce0e8ebea336ec0c0b653e0ced525e4d600000021757365722d303030303030303030303030303030303030303030303030303030310000002770622d30303030303030302d303030302d343030302d383030302d303030303030303030303031000000206465766963652d303030303030303030303030303030303030303030303030310000000f48534d534e2d544553542d3030303100000020d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787370000004104d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c91285000000020000000000000001000001964a1aea0000000020aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa000000205555555555555555555555555555555555555555555555555555555555555555",
+  "transcript_len": 364
+}

@@ -61,4 +61,99 @@ enum ServerCapability {
   // boot against a server that does not advertise this bit — see
   // `docs/superpowers/plans/2026-04-21-hsm-identity-regeneration-bug-report-and-fix-spec.md`.
   SERVER_CAPABILITY_IDENTITY_COMMIT_V1 = 2;
+
+  // Identity registration proof v1 (2026-04-24 cross-repo identity
+  // production readiness plan, WP1/WP4). When advertised, the server:
+  //   (1) issues a single-use 32-byte `server_nonce` via
+  //       `DeviceService.RequestIdentityRegistrationNonce` bound to the
+  //       authenticated user/device/phone_binding;
+  //   (2) requires `RegisterIdentityKeyRequest.proof` on every first
+  //       commit, no-rotation reinstall, and rotation, and verifies the
+  //       Ed25519 signature over the canonical transcript (see
+  //       `docs/canonical-transcript-encoder-v1.md`);
+  //   (3) rejects `RegisterIdentityKeyRequest` whose duplicated
+  //       top-level fields disagree with the signed `proof` fields;
+  //   (4) maintains a user-level identity lineage and a monotonic
+  //       `server_identity_version` so HSM-replacement flows that
+  //       reset the firmware epoch to 1 still monotonically advance
+  //       the server-side counter;
+  //   (5) fails closed on prekey uploads without a trusted identity
+  //       and on unsigned/invalid-signature prekeys.
+  // Clients that require proof-backed registration MUST refuse to boot
+  // against a server that does not advertise this bit. Servers with
+  // `grace_accept_legacy_rotations=true` MAY advertise this bit only in
+  // dev/staging environments.
+  SERVER_CAPABILITY_IDENTITY_PROOF_V1 = 3;
+
+  // Backend dev-reset marker v1 (2026-04-24 plan WP9). When advertised,
+  // the server:
+  //   (1) publishes a `BackendResetState` via an unauthenticated
+  //       bootstrap/config endpoint (or on auth-failure metadata) after
+  //       a `KAYTEN_DEV_RESET_ON_STARTUP=true` boot;
+  //   (2) guarantees the reset marker is NOT stored only in Postgres or
+  //       Redis (both are wiped by the reset-on-startup flow);
+  //   (3) returns `environment="prod"`, `reset_on_startup_enabled=false`,
+  //       empty `identity_dev_reset_generation`, and
+  //       `identity_dev_reset_epoch=0` in production — production
+  //       startup hard-fails rather than running reset.
+  // Clients use the marker to clear local trust/session/history state
+  // after a dev backend wipe, without production code ever accepting
+  // dev-reset as an identity-rotation authorization method.
+  SERVER_CAPABILITY_BACKEND_RESET_STATE_V1 = 4;
+}
+
+// Dev-reset marker advertised by the server after a
+// `KAYTEN_DEV_RESET_ON_STARTUP=true` boot (2026-04-24 cross-repo plan
+// WP9). Populated on the unauthenticated bootstrap/config endpoint and
+// echoed on auth-failure metadata so the app can detect "backend was
+// wiped" before attempting authenticated session restore.
+//
+// Production posture: the server MUST return `environment="prod"`,
+// `reset_on_startup_enabled=false`, empty
+// `identity_dev_reset_generation`, `identity_dev_reset_epoch=0`. Any
+// other value in production is a wire-level error — the app treats it
+// as a hostile server and refuses to run. The server also MUST hard
+// fail startup when `KAYTEN_DEV_RESET_ON_STARTUP=true` is combined
+// with a production-posture `KAYTEN_ENV`.
+//
+// Storage rule: the reset marker MUST NOT live only in Postgres or
+// Redis, because both are wiped by the reset-on-startup flow. An
+// in-memory marker valid for the reset-boot lifetime is sufficient
+// for the current Portainer/Docker dev workflow. Operators who need
+// the marker to survive a later restart with
+// `KAYTEN_DEV_RESET_ON_STARTUP=false` MUST persist it to a
+// config-mounted file outside Postgres/Redis.
+message BackendResetState {
+  // Server environment. Exactly one of: `development`, `dev`, `local`,
+  // `test`, `staging`, `prod`. Production builds MUST return `prod`.
+  // Clients MUST treat any value other than the four dev/test variants
+  // as production and ignore reset advisories.
+  string environment = 1;
+
+  // Monotonic reset counter for this backend base URL. Increments on
+  // every reset-on-startup boot. Production returns 0. The app
+  // compares this against its last-seen value for the same base URL
+  // and clears local state on strictly-greater.
+  uint64 identity_dev_reset_epoch = 2;
+
+  // UUID generated for this reset boot. Used when epoch persistence
+  // across reset boots is not available (the default for the
+  // Portainer in-memory marker). Production returns "". The app
+  // compares this against its last-seen value for the same base URL
+  // and clears local state on string inequality.
+  string identity_dev_reset_generation = 3;
+
+  // Millisecond Unix timestamp of this reset boot. Production returns 0.
+  int64 reset_at_unix_ms = 4;
+
+  // Free-form reason string. The server sets "reset_on_startup" for
+  // the Portainer flow; future live-reset endpoints may use different
+  // values. Production returns "".
+  string reset_reason = 5;
+
+  // True only on a reset boot where `KAYTEN_DEV_RESET_ON_STARTUP=true`
+  // was honored. False on all other boots, including non-dev
+  // environments and dev boots without the flag. Production MUST
+  // return false.
+  bool reset_on_startup_enabled = 6;
 }
