@@ -7,6 +7,23 @@ option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v
 import "google/protobuf/timestamp.proto";
 
 service DeviceService {
+  // Request a single-use server nonce for the identity registration
+  // proof (2026-04-24 cross-repo plan WP1). MUST be called after
+  // `AuthService.VerifyCode` so the server can bind the nonce to a
+  // verified `user_id`, `device_id`, and `phone_binding_id`. The
+  // returned `server_nonce` is included in the
+  // `IdentityRegistrationProof` canonical transcript and consumed by a
+  // subsequent `RegisterIdentityKey` call. Replay of the same nonce on
+  // a later `RegisterIdentityKey` is rejected.
+  //
+  // Authentication: bearer JWT from `VerifyCode` / `RefreshToken`.
+  //
+  // Error taxonomy:
+  //   FailedPrecondition — no recent phone verification for this user
+  //   InvalidArgument    — device_id / hsm_serial / ed25519_pub shape
+  //   ResourceExhausted  — nonce-issuance rate limit exceeded
+  rpc RequestIdentityRegistrationNonce(RequestIdentityRegistrationNonceRequest) returns (RequestIdentityRegistrationNonceResponse);
+
   // Register or replace the device identity key material after HSM setup.
   rpc RegisterIdentityKey(RegisterIdentityKeyRequest) returns (RegisterIdentityKeyResponse);
 
@@ -166,6 +183,186 @@ message Prekey {
   string curve_type = 5;
 }
 
+// Signed proof of HSM possession for identity registration (2026-04-24
+// cross-repo plan WP1). Built by the app from fields the server has
+// already issued (user_id, device_id, phone_binding_id, server_nonce)
+// plus fields the HSM reports (identity pub, ECDH pub, commit state,
+// commit epoch, hsm_serial). The app encodes the fields into the
+// canonical transcript specified in
+// `docs/canonical-transcript-encoder-v1.md`, hashes the transcript with
+// SHA-256, and asks the HSM to sign the digest with the identity
+// Ed25519 key under purpose `IDENTITY_REGISTRATION`.
+//
+// Security model:
+//   - `domain_tag` MUST equal `IDENTITY_REGISTRATION_DOMAIN_TAG_V1` —
+//     the SHA-256 digest of the ASCII string
+//     `"kayten-identity-registration-v1"`. Hex value pinned in the
+//     encoder doc. Any other value is a wire-level error.
+//   - `server_nonce` MUST match a nonce issued via
+//     `RequestIdentityRegistrationNonce` to this exact user/device/
+//     phone_binding and not yet consumed.
+//   - `client_nonce` is 32 bytes of caller-supplied entropy, preferably
+//     from the HSM TRNG.
+//   - `phone_binding_id` is an opaque server-issued binding returned
+//     from a recent successful phone verification. The raw phone
+//     number is NEVER placed in this field.
+//   - All duplicated top-level fields on `RegisterIdentityKeyRequest`
+//     MUST agree byte-for-byte with the fields inside `proof`.
+//     Servers with `SERVER_CAPABILITY_IDENTITY_PROOF_V1` reject any
+//     disagreement with `InvalidArgument`.
+//   - `signature` is Ed25519 over `sha256(canonical_transcript)`.
+//     Verified against `ed25519_identity_pub` in this same message.
+message IdentityRegistrationProof {
+  // 32-byte purpose/domain tag. Pinned to
+  // `IDENTITY_REGISTRATION_DOMAIN_TAG_V1` —
+  // sha256("kayten-identity-registration-v1") =
+  // 40547e31bafc49be8ae9f98e821b4dcce0e8ebea336ec0c0b653e0ced525e4d6.
+  bytes domain_tag = 1;
+
+  // Authenticated user ID. MUST match the caller's JWT subject.
+  string user_id = 2;
+
+  // Opaque server-issued handle for a recent successful phone
+  // verification. Issued on `AuthService.VerifyCode` completion and
+  // consumed by a subsequent `RegisterIdentityKey`. The raw phone
+  // number MUST NEVER appear in this field.
+  string phone_binding_id = 3;
+
+  // Device ID. MUST match the caller's JWT device_id claim.
+  string device_id = 4;
+
+  // HSM serial number as reported by the HSM. Production servers MUST
+  // reject shared/default/blank serials.
+  string hsm_serial = 5;
+
+  // Ed25519 identity public key. Exactly 32 bytes.
+  bytes ed25519_identity_pub = 6;
+
+  // ECDH identity public key. 33 bytes (P-256 compressed) or 65 bytes
+  // (P-256 uncompressed, leading 0x04). No other encodings accepted.
+  bytes ecdh_identity_pub = 7;
+
+  // HSM-reported commit state at the moment the proof was built. MUST
+  // be `IDENTITY_COMMIT_STATE_COMMITTED` for every accepted proof.
+  IdentityCommitState commit_state = 8;
+
+  // HSM-reported commit epoch. MUST be ≥ 1.
+  uint64 commit_epoch = 9;
+
+  // Millisecond Unix timestamp at which the app built the proof.
+  // Server rejects if outside clock-skew tolerance (default ±60s for
+  // the future bound, ±5min for the past bound — tuned per-deploy).
+  int64 issued_at_unix_ms = 10;
+
+  // 32 bytes issued by the server via
+  // `RequestIdentityRegistrationNonce`. Single-use, scoped to the
+  // authenticated user/device/phone_binding. Replay of the same nonce
+  // on a later `RegisterIdentityKey` is rejected.
+  bytes server_nonce = 11;
+
+  // 32 bytes of client-supplied entropy, preferably from the HSM
+  // TRNG. Ensures the transcript is unique even if the server nonce
+  // is somehow replayed.
+  bytes client_nonce = 12;
+
+  // Ed25519 signature over `sha256(canonical_transcript)`. The
+  // transcript layout is pinned in
+  // `docs/canonical-transcript-encoder-v1.md`.
+  bytes signature = 13;
+}
+
+// Rotation authorization (2026-04-24 cross-repo plan WP1). Carried on
+// `RegisterIdentityKeyRequest.rotation_auth`. The server uses this to
+// decide whether an identity pub change is legitimate and, if so, which
+// authenticated rotation method authorized it. A stale JWT alone MUST
+// NOT authorize an identity pub change — the server requires one of
+// the typed auth methods below.
+//
+// Auth methods in increasing trust order:
+//   FIRST_COMMIT              — no prior identity for this user/device;
+//                               proof alone plus fresh SMS verify is
+//                               sufficient.
+//   RECENT_SMS_REVERIFY       — the user proved control of the phone
+//                               number within the server's recency
+//                               window (default ~10 minutes) by
+//                               completing `AuthService.VerifyCode`.
+//   ACCOUNT_RECOVERY_TOKEN    — the user supplied a valid recovery
+//                               token previously issued via the
+//                               account-recovery flow.
+//   PRIMARY_DEVICE_ATTESTATION — another device of the same user
+//                               cross-signed the proposed new
+//                               identity (see `LinkingAttestation`).
+//                               Only available when multi-device is
+//                               enabled for this deploy.
+//
+// `KAYTEN_DEV_RESET_ON_STARTUP` is NOT a rotation auth method. Dev
+// reset is a client/server state-clear signal, not a trust decision.
+// Production servers MUST fail startup rather than accept a dev-reset
+// rotation path.
+message IdentityRotationAuth {
+  enum Method {
+    METHOD_UNSPECIFIED = 0;
+    METHOD_FIRST_COMMIT = 1;
+    METHOD_RECENT_SMS_REVERIFY = 2;
+    METHOD_ACCOUNT_RECOVERY_TOKEN = 3;
+    METHOD_PRIMARY_DEVICE_ATTESTATION = 4;
+  }
+
+  Method method = 1;
+
+  // Opaque server-issued handle referencing a successful SMS
+  // re-verification completed within the server's recency window.
+  // Required when `method == METHOD_RECENT_SMS_REVERIFY`. Empty
+  // otherwise.
+  string sms_reverify_id = 2;
+
+  // Opaque server-issued recovery token. Single-use. Required when
+  // `method == METHOD_ACCOUNT_RECOVERY_TOKEN`. Empty otherwise.
+  bytes account_recovery_token = 3;
+
+  // Cross-device attestation from a primary device of the same user.
+  // Required when `method == METHOD_PRIMARY_DEVICE_ATTESTATION`.
+  // Empty otherwise. See `LinkingAttestation` for the signed
+  // transcript format.
+  LinkingAttestation linking_attestation = 4;
+}
+
+message RequestIdentityRegistrationNonceRequest {
+  // Authenticated user ID. Server cross-checks against JWT subject.
+  string user_id = 1;
+
+  // Authenticated device ID. Server cross-checks against JWT device
+  // claim. Must be the device that just completed `VerifyCode`.
+  string device_id = 2;
+
+  // HSM serial as reported by the HSM probe. Production servers
+  // reject shared/default/blank serials.
+  string hsm_serial = 3;
+
+  // Identity Ed25519 public key the app intends to register. Server
+  // binds the issued nonce to this pub so a proof built with a
+  // different pub fails verification.
+  bytes ed25519_identity_pub = 4;
+}
+
+message RequestIdentityRegistrationNonceResponse {
+  // Opaque server-issued handle referencing the recent phone
+  // verification that authorized this nonce. The app echoes this
+  // value verbatim into `IdentityRegistrationProof.phone_binding_id`.
+  // The server never exposes the raw phone number through this
+  // handle.
+  string phone_binding_id = 1;
+
+  // 32 bytes of server entropy. The app includes this verbatim in
+  // the canonical transcript. Single-use.
+  bytes server_nonce = 2;
+
+  // Millisecond Unix timestamp after which the server will reject
+  // any `RegisterIdentityKey` that consumes this nonce. Typical TTL
+  // is 5 minutes.
+  int64 expires_at_unix_ms = 3;
+}
+
 message RegisterIdentityKeyRequest {
   string device_id = 1;
   bytes ed25519_pub = 2;
@@ -194,7 +391,33 @@ message RegisterIdentityKeyRequest {
   // no-rotation metadata refreshes, SMS-reverify paths, and recovery-
   // token paths. Server ignores this field when the incoming request
   // would have been accepted under a simpler auth_method.
+  //
+  // DEPRECATED by `rotation_auth` for post-WP1 clients. Kept for
+  // backward compatibility during rollout — servers with
+  // `SERVER_CAPABILITY_IDENTITY_PROOF_V1` prefer
+  // `rotation_auth.linking_attestation` and treat the top-level field
+  // as a fallback only when `rotation_auth` is unset.
   LinkingAttestation linking_attestation = 8;
+
+  // HSM serial. Production servers reject shared/default/blank
+  // serials. Top-level mirror of `proof.hsm_serial`; servers with
+  // `SERVER_CAPABILITY_IDENTITY_PROOF_V1` reject disagreement with
+  // the signed proof.
+  string hsm_serial = 9;
+
+  // HSM proof of possession for this identity registration (WP1).
+  // Required when the server advertises
+  // `SERVER_CAPABILITY_IDENTITY_PROOF_V1`. Canonical transcript +
+  // domain tag pinned in `docs/canonical-transcript-encoder-v1.md`.
+  IdentityRegistrationProof proof = 10;
+
+  // Rotation authorization (WP1). Required for any registration that
+  // results in an identity pub change for an existing user (including
+  // HSM replacement that resets the firmware epoch to 1). Optional
+  // for first-commit on a brand-new user — servers with
+  // `SERVER_CAPABILITY_IDENTITY_PROOF_V1` infer `METHOD_FIRST_COMMIT`
+  // from the absence of a prior lineage.
+  IdentityRotationAuth rotation_auth = 11;
 }
 
 message RegisterIdentityKeyResponse {
@@ -276,6 +499,34 @@ message DeviceIdentity {
   // appears here because a device with no identity is never in
   // ListUserDevices results).
   IdentityCommitState identity_commit_state = 8;
+
+  // Server-side monotonic identity version for the lineage this
+  // device belongs to (2026-04-24 cross-repo plan WP4). Increments
+  // on every accepted pub-change rotation, including HSM
+  // replacement events where the firmware epoch restarts at 1.
+  // Zero on legacy servers that do not implement user-level
+  // lineage. Clients use this to detect rotations the firmware
+  // epoch alone cannot distinguish (e.g. two successive HSM
+  // replacements).
+  uint64 server_identity_version = 9;
+
+  // Lineage/rotation identifier for the current rotation row. A
+  // UUID generated by the server on every accepted rotation. Empty
+  // on legacy servers and on devices that have never rotated.
+  // Clients may use this to correlate receiver `KEY_CHANGE_ALERT`
+  // events with a specific server-observed rotation.
+  string current_rotation_id = 10;
+
+  // True when the server has accepted a rotation but the device's
+  // peers have not yet verified the new identity. Clients SHOULD
+  // show an identity-change banner to receivers until they
+  // explicitly verify. The server does not auto-clear this flag.
+  bool post_rotation_pending_verify = 11;
+
+  // Millisecond Unix timestamp of the most recent accepted
+  // rotation for this device's lineage. Zero if the device has
+  // never rotated.
+  int64 rotated_at_unix_ms = 12;
 }
 
 message AttestationRequest {
