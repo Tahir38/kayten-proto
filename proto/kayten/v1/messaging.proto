@@ -448,6 +448,51 @@ message ReceiveMessage {
   // Receivers MUST verify the composite signature against this key
   // and MUST NOT fall back to any server lookup.
   bytes signer_identity_pub = 25;
+
+  // ── Receiver-warning metadata (2026-04-24 cross-repo identity
+  //    production readiness plan §1, §4.7) ──────────────────────
+  //
+  // The three fields below are STAMPED BY THE SERVER on outbound
+  // fan-out and on offline-sync drain. Senders never supply them.
+  // The server derives the values from its `user_identity_lineages`
+  // state at the moment the message is dispatched, so the receiver
+  // sees the lineage snapshot that was authoritative when the
+  // message was relayed.
+  //
+  // Receivers use these in addition to (not instead of) the
+  // CAP_WIRE_IDENTITY_V1 TOFU pub mismatch detection. The wire-pub
+  // path catches per-device key rotations (silent re-key on the
+  // same device); these server-stamped fields catch user-level
+  // identity rotations the sender's app may not yet have surfaced
+  // locally — e.g. a freshly-rotated sender whose first message
+  // arrives at a receiver that has never observed the new pub on
+  // the wire before.
+  //
+  // Pre-delta servers omit these fields; receivers MUST treat the
+  // absence as "no rotation signal" and fall back to TOFU-only
+  // detection. Non-breaking rollout.
+
+  // Monotonic per-user identity commit epoch at dispatch time. Mirrors
+  // the value on the sender's lineage row (`server_identity_version`
+  // in kayten-server `user_identity_lineages`). Zero when the server
+  // has no lineage entry for the sender (legacy / pre-WP4.4).
+  uint64 sender_identity_commit_epoch = 26;
+
+  // Opaque server-issued lineage / rotation identifier. Equivalent
+  // to `DeviceIdentity.current_rotation_id` for the sender's lineage
+  // at dispatch time. Empty string when the server has no lineage
+  // entry. Used by receiver UI to disambiguate "this is a rotation
+  // I have already approved" vs "this is a brand-new rotation."
+  string sender_identity_rotation_id = 27;
+
+  // True when the sender's lineage carries a freshly-rotated identity
+  // that has NOT yet been confirmed by a downstream receiver-side
+  // verify gesture. The receiver SHOULD render the KEY_CHANGE_ALERT
+  // surface and demand explicit user approval before accepting
+  // further trusted messages from this sender. False (default) means
+  // either no recent rotation or the rotation has already been
+  // settled receiver-side.
+  bool post_rotation_pending_verify = 28;
 }
 
 message MessageAck {
