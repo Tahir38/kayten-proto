@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package kayten.v1;
+
+option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
+
+import "kayten/v1/common.proto";
+
+// SystemService — unauthenticated bootstrap/config surface.
+//
+// Cross-repo plan WP9 (2026-04-24 cross-repo identity production
+// readiness plan §WP9). Called by the app BEFORE
+// AuthService.VerifyCode so clients can detect a backend dev-reset
+// (KAYTEN_DEV_RESET_ON_STARTUP=true wipe of Postgres + Redis) and
+// clear local state before authenticated session restore against a
+// server that no longer recognises their device row.
+//
+// Production posture: a server with KAYTEN_ENV=production MUST
+// return BackendResetState with environment="prod",
+// reset_on_startup_enabled=false, identity_dev_reset_generation="",
+// identity_dev_reset_epoch=0. Clients MUST treat any other shape
+// from a production backend as a hostile or misconfigured server.
+//
+// Capability advertisement: servers that implement this RPC SHOULD
+// also set SERVER_CAPABILITY_BACKEND_RESET_STATE_V1 in
+// AuthTokenResponse.capabilities (see common.proto:88-102). Clients
+// calling this RPC pre-auth do NOT have access to that bit; they
+// MUST treat gRPC Unimplemented / Unavailable as "no advisory" (i.e.
+// the server is pre-WP9), NOT as an error. Capability-requiring
+// clients can still gate strict-mode behaviour on the bit AFTER the
+// authenticated handshake completes.
+//
+// Auth interceptor: the server's gRPC auth middleware MUST exclude
+// this RPC from the authenticated allowlist. A misconfigured global
+// interceptor that demands a JWT on every method would mask real
+// backend resets (the client cannot present a JWT it has not yet
+// obtained), so the failure mode for that misconfiguration MUST be
+// "loud test failure", not "silent advisory loss".
+service SystemService {
+  rpc GetBackendResetState(GetBackendResetStateRequest)
+      returns (GetBackendResetStateResponse);
+}
+
+message GetBackendResetStateRequest {
+  // Reserved for future probe nonce / environment hint. Empty in v1.
+}
+
+message GetBackendResetStateResponse {
+  // Reset marker. Always populated; production returns the
+  // documented zero-shape (environment="prod" or "production",
+  // reset_on_startup_enabled=false, generation="", epoch=0).
+  BackendResetState reset_state = 1;
+}

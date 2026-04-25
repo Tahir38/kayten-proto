@@ -87,9 +87,10 @@ enum ServerCapability {
 
   // Backend dev-reset marker v1 (2026-04-24 plan WP9). When advertised,
   // the server:
-  //   (1) publishes a `BackendResetState` via an unauthenticated
-  //       bootstrap/config endpoint (or on auth-failure metadata) after
-  //       a `KAYTEN_DEV_RESET_ON_STARTUP=true` boot;
+  //   (1) publishes a `BackendResetState` via the unauthenticated
+  //       `SystemService.GetBackendResetState` RPC (see
+  //       `kayten/v1/system.proto`) — and/or on auth-failure metadata —
+  //       after a `KAYTEN_DEV_RESET_ON_STARTUP=true` boot;
   //   (2) guarantees the reset marker is NOT stored only in Postgres or
   //       Redis (both are wiped by the reset-on-startup flow);
   //   (3) returns `environment="prod"`, `reset_on_startup_enabled=false`,
