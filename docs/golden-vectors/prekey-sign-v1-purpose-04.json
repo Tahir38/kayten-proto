@@ -1,0 +1,31 @@
+{
+  "description": "WP1 prekey-sign purpose-0x04 golden vector. Hardware HSM running KAYTEN_FW_VERSION_MINOR=2 signs prekey ECDH public keys (P-256 uncompressed, 65 bytes) as Ed25519(identity_priv, SHA-256(0x04 || SHA-256(ecdh_pub))). Server verifies this under KAYTEN_PREKEY_SIGN_PURPOSE_BINDING=wrapped_only (or dual_verify during rollout). See spec §2, §3, §7.",
+  "ecdh_curve": "P-256-uncompressed",
+  "ecdh_pub_len_bytes": 65,
+  "firmware_minor_required": 2,
+  "firmware_purpose_binding_version": "v1.2",
+  "inputs": {
+    "ecdh_priv_scalar_hex_test_only": "4444444444444444444444444444444444444444444444444444444444444444",
+    "ecdh_pub_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a",
+    "ed25519_identity_priv_seed_hex_test_only": "3333333333333333333333333333333333333333333333333333333333333333",
+    "ed25519_identity_pub_hex": "17cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce"
+  },
+  "notes": [
+    "TEST KEY ONLY — the Ed25519 seed (0x33*32) and P-256 scalar (0x44*32) are fixed and public.",
+    "These keys MUST NOT appear in any production, staging, or non-test context.",
+    "ecdh_pub is P-256 uncompressed (65 bytes, leading 0x04). All kayten-server prekey verifiers",
+    "  operate on the raw P-256 pub bytes per kayten-server/internal/device/service.go verifyPrekeyEd25519.",
+    "payload32 = SHA-256(ecdh_pub). This is the 32-byte payload the app passes to CMD_IDENTITY_SIGN (0x48).",
+    "signed_digest = SHA-256(0x04 || payload32). Firmware computes this before Ed25519 signing (fw_minor=2 path).",
+    "signature = Ed25519(identity_priv, signed_digest). This is what the server verifies under purpose_04 shape.",
+    "Covers BOTH SPK and OPK — they authenticate the same statement type (spec §2.1).",
+    "Seed 0x33*32 is distinct from identity-registration seeds (0x11/0x22) to prevent cross-vector confusion.",
+    "Run: cd docs/golden-vectors \u0026\u0026 go run gen_prekey_sign_v1_purpose_04.go \u003e prekey-sign-v1-purpose-04.json"
+  ],
+  "payload32_hex": "da35a142ef073d5a8b155a5bec3a7cdfc86c1cc3fd4fcd79ca7df849b6606b46",
+  "purpose": "prekey-sign",
+  "purpose_byte": 4,
+  "signature_hex": "d2595df6c407250c0a4e9eb39e836499284cac9bb25ae0607241d975ccd151013f919582297e8489707acfefa1500e160969070f7f2e82fdaf1fefd34bd0a30e",
+  "signed_digest_hex": "0dd03e75f43d4c958ec482f3f56fd4f9d5588c74e41151940a9078e0e844cbad",
+  "version": "prekey-sign-v1-purpose-04"
+}
