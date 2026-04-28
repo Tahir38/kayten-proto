@@ -496,8 +496,20 @@ message ReceiveMessage {
 }
 
 message MessageAck {
+  // Server-generated UUID (`messages.id` primary key). Persisted on
+  // the sender's local row as `server_message_id` so subsequent
+  // DELIVERY_RECEIPT / READ_RECEIPT envelopes (which reference the
+  // server-side id) can be correlated back to the same row.
   string message_id = 1;
   int64 server_seq = 2;
+  // Echoes the sender's `SendMessage.client_msg_id` so the sender's
+  // app can correlate this ACK to the local row it inserted with
+  // that UUID as primary key. Without this echo, the sender sees an
+  // ACK for a server-generated UUID that does not exist in its
+  // local DB and the bubble's delivery indicator stays on "sending"
+  // forever. Empty string when the original SendMessage carried no
+  // client_msg_id (legacy senders).
+  string client_msg_id = 3;
 }
 
 message DeliveryReceipt {
