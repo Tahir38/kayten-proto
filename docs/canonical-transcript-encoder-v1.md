@@ -32,6 +32,8 @@ Each signing purpose has a fixed 32-byte domain tag. The tag is the SHA-256 dige
 | Linking attestation | `kayten-link-attestation-v1` | `55e8fb4ee562746610ddb31a2cf0c5ff9deb8a6a68fb2e5edd967e7d402a8516` |
 | WebSocket auth | `kayten-ws-auth-v1` | `a9da6bdb4ba71aa8c5a74ff8509fd672d76c7019650f4ec699bf3b8a8ab51d8c` |
 
+Note: domain tags apply to the `IdentityRegistrationProof` transcript encoder. The prekey-sign purpose (0x04, below) does not use this transcript encoder — its `payload32` is derived directly from the ECDH public key as described in the purpose namespace table.
+
 Note: the existing `LinkingAttestation` message in `device.proto` uses a legacy null-separated transcript format documented in its field comment and predates this encoder. New transcripts MUST use this encoder. When the linking attestation path is next revised (v2), it will migrate to this encoder; until then the two formats coexist and are distinguished by their domain tags.
 
 ## IdentityRegistrationProof v1 transcript
@@ -109,6 +111,133 @@ Every repo that produces or verifies identity registration transcripts MUST incl
 5. Verifies the Ed25519 signature in the vector against the vector's pub and digest.
 
 Any repo that fails this test is not permitted to ship to staging or production. Broken transcripts produce silent signature mismatches which the server fails closed on — users see "identity registration failed" with no explanation.
+
+## Purpose namespace (identity-sign command 0x48 / 0x56)
+
+The firmware identity-sign command wraps every 32-byte signing payload as:
+
+```text
+signed_digest = SHA-256(purpose || payload32)
+signature     = Ed25519(identity_priv, signed_digest)
+```
+
+### Table 1 — allocated purpose bytes
+
+| Purpose byte | Symbolic name | Defined for |
+|---|---|---|
+| `0x01` | `identity-registration` | `IdentityRegistrationProof` only |
+| `0x02` | `link` | Linking attestation only |
+| `0x03` | `ws_auth` | WebSocket auth challenge only |
+| `0x04` | `prekey-sign` | SPK and OPK signatures uploaded via `DeviceService.UploadPrekeys` |
+
+`0x05..0xFF` remain invalid until an explicit future spec allocates them. Production app code must not rely on Kotlin defaults to select a purpose. Every `identitySign` call site must pass an explicit purpose byte.
+
+### Purpose 0x04 — prekey-sign
+
+Added in: cross-repo prekey-purpose-allocation spec 2026-04-27, WP1 (Order 1). Requires `KAYTEN_FW_VERSION_MINOR >= 2` (HSM allow-list extended in WP2) and `SPI_CAP_PURPOSE_PREKEY_V1` visible on the probe state (WP3).
+
+**Why one purpose covers both SPK and OPK.** SPK and OPK signatures authenticate the same statement type: "this ECDH public prekey belongs to this device identity and may be used for X3DH bootstrap." They do not have distinct replay, revocation, or verifier trust domains. Rotation and consumption semantics differ at the key-row level, not at the Ed25519 signature namespace level. A single `prekey-sign` purpose keeps server verification simple while still separating all prekey signatures from identity registration and WS auth. See spec §2.1.
+
+**Signing flow (firmware, fw_minor >= 2):**
+
+```text
+payload32     = SHA-256(ecdh_pub)              // ecdh_pub is P-256 uncompressed (65 bytes)
+signed_digest = SHA-256(0x04 || payload32)     // firmware wraps with purpose byte
+signature     = Ed25519(identity_priv, signed_digest)
+```
+
+`ecdh_pub` is the raw P-256 uncompressed public key (65 bytes, leading `0x04`). No other encoding is accepted. `payload32` is always 32 bytes.
+
+**App call site (Dart, real-HSM mode):**
+
+```dart
+final digest = sha256.convert(ecdhPub);               // payload32
+return _hsmService.identitySign(
+  payload: Uint8List.fromList(digest.bytes),
+  purpose: kKaytenPurposePrekeySign,                   // 0x04
+);
+```
+
+**Server verifier (purpose_04 shape):**
+
+```text
+Ed25519(identity_key, SHA-256(0x04 || SHA-256(ECDHPub)))
+```
+
+Server accepts this shape under `KAYTEN_PREKEY_SIGN_PURPOSE_BINDING=wrapped_only`. Under `dual_verify` it also accepts the `0x01`-wrapped bridge shape and the legacy `SHA-256(ECDHPub)` / raw `ECDHPub` shapes. The bridge shapes are removed after fleet drain (see rollout spec §9).
+
+**Golden vector:** `docs/golden-vectors/prekey-sign-v1-purpose-04.json`. Generator: `docs/golden-vectors/gen_prekey_sign_v1_purpose_04.go`.
+
+**Test requirements.** Every repo that produces or verifies prekey signatures MUST include a golden-vector test that:
+
+1. Loads the fixed test vector from `docs/golden-vectors/prekey-sign-v1-purpose-04.json`.
+2. Reads `ecdh_pub_hex` from `inputs.ecdh_pub_hex`.
+3. Computes `payload32 = SHA-256(ecdh_pub)` and asserts it matches `payload32_hex`.
+4. Computes `signed_digest = SHA-256(0x04 || payload32)` and asserts it matches `signed_digest_hex`.
+5. Verifies the Ed25519 signature in `signature_hex` against `inputs.ed25519_identity_pub_hex` over `signed_digest`.
+
+---
+
+## Capability bits
+
+### HSM capability bit 9 — KAYTEN_HSM_CAP_PURPOSE_PREKEY_V1
+
+Authoritative file: `uHSM-HSM/Src/BSW/kHsm/kHsm_Kayten.h`
+
+```c
+#define KAYTEN_HSM_CAP_PURPOSE_PREKEY_V1 (0x00000200u) /* bit 9 */
+```
+
+Advertised by the HSM when firmware running `KAYTEN_FW_VERSION_MINOR >= 2` has extended the identity-sign allow-list to include purpose `0x04`. Queried via command `0x50` (capability probe).
+
+Current HSM capability allocation (bits 0–9):
+
+| Bit | Constant | Value |
+|---|---|---|
+| 0 | `KAYTEN_HSM_CAP_SECURE_EXECUTE_V1` | `0x00000001` |
+| 1 | `KAYTEN_HSM_CAP_CALL_KEY_AGREE` | `0x00000002` |
+| 2 | `KAYTEN_HSM_CAP_MSG_KEY_EXCHANGE_V1` | `0x00000004` |
+| 3 | `KAYTEN_HSM_CAP_DEDICATED_SLOTS_V1` | `0x00000008` |
+| 4 | `KAYTEN_HSM_CAP_PKCWAIT_TIMEOUT` | `0x00000010` |
+| 5 | `KAYTEN_HSM_CAP_OPK_V1` | `0x00000020` |
+| 6 | `KAYTEN_HSM_CAP_MOBILE_PROFILE_V1` | `0x00000040` |
+| 7 | `KAYTEN_HSM_CAP_DEV_FIRMWARE` | `0x00000080` |
+| 8 | `KAYTEN_HSM_CAP_RUNTIME_STATUS_V2` | `0x00000100` |
+| 9 | `KAYTEN_HSM_CAP_PURPOSE_PREKEY_V1` | `0x00000200` |
+
+### Host SPI capability bit 8 — SPI_CAP_PURPOSE_PREKEY_V1
+
+Authoritative file: `uHSM-Host/Src/Mobile/Appl/kMobileManager.h`
+
+```c
+#define SPI_CAP_PURPOSE_PREKEY_V1 (0x00000100u) /* bit 8 */
+```
+
+The app does not read the raw HSM capability bitmap. It reads host `PROBE_STATE.capability_flags`. `kMobileManager_HandleMobileProbeState` queries `0x50`, checks `KAYTEN_HSM_CAP_PURPOSE_PREKEY_V1` (bit 9), and mirrors it into `SPI_CAP_PURPOSE_PREKEY_V1` (bit 8). This mirrors the existing OPK pattern:
+
+```text
+HSM 0x50 KAYTEN_HSM_CAP_OPK_V1 (bit 5)          -> Host PROBE_STATE SPI_CAP_OPK_V1
+HSM 0x50 KAYTEN_HSM_CAP_PURPOSE_PREKEY_V1 (bit 9) -> Host PROBE_STATE SPI_CAP_PURPOSE_PREKEY_V1 (bit 8)
+```
+
+If the host cannot query `0x50`, it must fail closed by not advertising `SPI_CAP_PURPOSE_PREKEY_V1`. The server must not depend on live HSM caps — server behavior is controlled by `KAYTEN_PREKEY_SIGN_PURPOSE_BINDING` and the SQL row tag (see spec §4.3).
+
+Current app-visible SPI capability allocation:
+
+| Bit | Constant | Value |
+|---|---|---|
+| 0 | `SPI_CAP_SECURE_EXECUTE_V1` | `0x00000001` |
+| 1 | `SPI_CAP_CALL_KEY_AGREE` | `0x00000002` |
+| 2 | `SPI_CAP_MSG_KEY_EXCHANGE_V1` | `0x00000004` |
+| 3 | `SPI_CAP_MSG_KE_RESPONDER_V1` | `0x00000008` |
+| 4 | `SPI_CAP_OPK_V1` | `0x00000010` |
+| 6 | `SPI_CAP_MOBILE_PROFILE_V1` | `0x00000040` |
+| 7 | `SPI_CAP_DEV_FIRMWARE` | `0x00000080` |
+| 8 | `SPI_CAP_PURPOSE_PREKEY_V1` | `0x00000100` |
+
+Bit 5 is intentionally not reused (host OPK capability history). Implementation must re-audit the bitmap before merging. If bit 8 is no longer free, this spec is blocked until a new allocation is chosen and all repos are updated consistently.
+
+---
 
 ## Non-goals
 
