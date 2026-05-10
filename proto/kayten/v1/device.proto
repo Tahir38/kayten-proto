@@ -5,6 +5,7 @@ package kayten.v1;
 option go_package = "github.com/kayten-gmbh/kayten-server/pkg/generated/kayten/v1;kaytenv1";
 
 import "google/protobuf/timestamp.proto";
+import "kayten/v1/common.proto";
 
 service DeviceService {
   // Request a single-use server nonce for the identity registration
@@ -418,6 +419,26 @@ message RegisterIdentityKeyRequest {
   // `SERVER_CAPABILITY_IDENTITY_PROOF_V1` infer `METHOD_FIRST_COMMIT`
   // from the absence of a prior lineage.
   IdentityRotationAuth rotation_auth = 11;
+
+  // Per-device capability advertisement (FIX-3, 2026-05-09 audit
+  // roadmap). Clients populate this with every `DeviceCapability` value
+  // they actually implement at the build/runtime level. The server
+  // records the declared set into `devices.advertised_device_capabilities`
+  // (JSONB or bitmask column, migration `04X_devices_advertised_capabilities`).
+  // At `OfferCall` time the server queries the recipient device's stored
+  // capabilities to gate video offers: if the recipient does not carry
+  // `DEVICE_CAPABILITY_CALL_VIDEO_V1` the server rejects the video offer
+  // with `FailedPrecondition "video_unsupported_by_recipient"`. This
+  // replaces the `current_identity_commit_epoch >= 1` proxy gate used
+  // in Step 9 Phase 2 (`207b578`) which approximates but cannot reliably
+  // distinguish "provisioned post-video-build" from "actually has the
+  // video media stack." Clients MUST NOT set a capability they do not
+  // implement; the server MUST NOT treat capability declarations as a
+  // security boundary (the gate is best-effort UX). Pre-delta clients
+  // that omit this field are treated as having an empty capability set.
+  // See FIX-3 in
+  // `kayten-app/docs/superpowers/reviews/2026-05-09-audit-findings-and-remediation-roadmap.md`.
+  repeated DeviceCapability advertised_device_capabilities = 12;
 }
 
 message RegisterIdentityKeyResponse {

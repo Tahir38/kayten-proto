@@ -122,6 +122,37 @@ enum ServerCapability {
   SERVER_CAPABILITY_CALL_VIDEO_V1 = 5;
 }
 
+// Per-device capability advertisement. Each device declares which
+// kayten-specific features it supports at registration time via
+// `RegisterIdentityKeyRequest.advertised_device_capabilities`. The
+// server stores the set per-device and the calling-side gate path
+// queries it at OfferCall time so video offers are rejected when
+// the recipient device cannot decrypt video frames.
+//
+// Distinct from `ServerCapability` (which advertises what the
+// SERVER supports). A `DeviceCapability` advertises what a CLIENT
+// device supports.
+//
+// Adding a new device capability is always additive — server treats
+// unknown values as "device does not support that feature." Clients
+// MUST set every capability they actually implement; the server
+// MUST NOT trust capability claims for security-critical decisions
+// — the gate is best-effort UX, not a security boundary.
+enum DeviceCapability {
+  DEVICE_CAPABILITY_UNSPECIFIED = 0;
+
+  // Encrypted video calling v1 — the device implements the full
+  // video stack: WebRTC video transceiver, getUserMedia camera,
+  // remote video renderer, AND has the FrameEncryptor / Decryptor
+  // wired against the live RtpSender / Receiver (the kayten 4-byte
+  // BE counter prefix wire format). Devices that have only the
+  // signaling stub (call_type='video' on the wire) but no media
+  // stack MUST NOT advertise this. See
+  // `kayten-app/docs/superpowers/reviews/2026-05-09-audit-findings-and-remediation-roadmap.md`
+  // FIX-3 + FIX-4.
+  DEVICE_CAPABILITY_CALL_VIDEO_V1 = 1;
+}
+
 // Dev-reset marker advertised by the server after a
 // `KAYTEN_DEV_RESET_ON_STARTUP=true` boot (2026-04-24 cross-repo plan
 // WP9). Populated on the unauthenticated bootstrap/config endpoint and

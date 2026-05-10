@@ -105,6 +105,53 @@ message CallDtlsFingerprint {
   bytes signature = 3;
 }
 
+// CallEpochRotate is a coordinated peer-to-peer video epoch rotation signal.
+// Per the kayten-app v1 video architecture design §4.3 (rotation tolerance
+// window), peers MUST rotate to a new epoch in lockstep — the sender derives
+// the new epoch via HSM `0x5D GENERATE_VIDEO_EPOCH_KEY` and signals the new
+// epoch_index to the peer; both sides switch within a 2-second overlap window
+// where both old and new keys can decrypt frames in flight. Without this
+// signaling, peers diverge on rotate timing and frames in flight fail GCM
+// auth on the receiver.
+//
+// Server relay: opaque, byte-for-byte. The server relays this envelope
+// verbatim between active call participants and MUST NOT rewrite, synthesize,
+// or reorder any field. The server does not inspect or validate the signature
+// or epoch_index (no key material is on the wire — see HSM 0x5D contract).
+//
+// The wire signaling is signed with the sender's Ed25519 identity key over
+// the canonical transcript `canonical_encode(conversation_id || call_id ||
+// new_epoch_index_LE_4B)` so a man-in-the-middle cannot inject a rotation
+// that the keying epoch wouldn't follow.
+//
+// See `kayten-app/docs/superpowers/reviews/2026-05-09-audit-findings-and-remediation-roadmap.md`
+// FIX-5.
+message CallEpochRotate {
+  // Conversation identifier (matches the conversation that owns the call).
+  string conversation_id = 1;
+
+  // Call identifier — the same id used in CallOffer / CallAnswer / CallHangup.
+  string call_id = 2;
+
+  // Monotonically advancing epoch index. The peer that receives this
+  // envelope rotates its decryptor's expected epoch to this value.
+  // The sender derives 0x5D with this index FIRST, then sends the
+  // envelope, then switches its encryptor.
+  uint32 new_epoch_index = 3;
+
+  // Sender's Ed25519 identity public key, mirroring the
+  // CAP_WIRE_IDENTITY_V1 contract on every composite envelope. The
+  // receiver's TOFU cache MUST match this against the cached value
+  // from the active call's CallOffer / CallAnswer.
+  bytes signer_identity_pub = 4;
+
+  // Ed25519(signer_identity_pub, transcript) where transcript =
+  // canonical_encode(conversation_id || call_id ||
+  // new_epoch_index_LE_4B). Receiver MUST validate before applying
+  // the rotation.
+  bytes signature = 5;
+}
+
 // CallVoiceRekey carries a Balanced Mode B epoch rotation for an active
 // call. See the "Voice mode contract" docblock at the top of this file.
 // For Strict Mode A this message is unused — Mode A rekey is owned by
