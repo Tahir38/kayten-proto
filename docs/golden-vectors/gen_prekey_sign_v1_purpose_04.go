@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Generator for the prekey-sign purpose-0x04 golden vector.
 //
 // Cross-repo spec: kayten-app/docs/superpowers/plans/

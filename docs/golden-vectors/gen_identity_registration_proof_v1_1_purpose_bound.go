@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Generator for the WP2 B1 firmware-side purpose-bound golden vector.
 //
 // Cross-repo plan WP7-1 (Session B 2026-04-25 review). The hardware HSM
