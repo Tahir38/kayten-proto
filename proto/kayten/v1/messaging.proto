@@ -344,6 +344,15 @@ message SendMessage {
   //
   // The server relays this field transparently into `ReceiveMessage`.
   bytes signer_identity_pub = 22;
+
+  // Group sender-key chain id. Populated only when this is a group
+  // message send (recipient_id is empty + conversation_id refers to a
+  // group conversation). Receivers use this to select the correct
+  // sender-key seed pair from GroupMemberKeyState when running
+  // GroupCryptoService.decryptGroupMessage. Default 0 = "not a group
+  // send" (proto3 default — receivers MUST treat 0 as absent).
+  // Server relays this field transparently.
+  uint32 group_chain_id = 23;
 }
 
 message ReceiveMessage {
@@ -495,6 +504,10 @@ message ReceiveMessage {
   // either no recent rotation or the rotation has already been
   // settled receiver-side.
   bool post_rotation_pending_verify = 28;
+
+  // Group sender-key chain id, relayed verbatim from the sending
+  // device's SendMessage.group_chain_id. See SendMessage docblock.
+  uint32 group_chain_id = 29;
 }
 
 message MessageAck {
