@@ -443,6 +443,29 @@ message RegisterIdentityKeyRequest {
 
 message RegisterIdentityKeyResponse {
   bool success = 1;
+
+  // SP-7 — Re-Registration Identity Continuity (see spec
+  // docs/superpowers/specs/2026-05-16-sp7-re-registration-identity-
+  // continuity-design.md §3.6).
+  //
+  // True when RegisterIdentityKey accepted a NEW identity key for an
+  // EXISTING user (i.e. validateRotationAuth approved a rotation where
+  // device_identity_rotations.previous_identity_pub is non-null).
+  // Server has suppressed sync of the user's prior conversations +
+  // messages, deleted prekeys / sessions / group_members, revoked
+  // stale devices, and emitted KEY_CHANGE_ALERT + GroupMemberEvent +
+  // DEVICE_REVOKED to peers.
+  //
+  // Client SHOULD:
+  //   1. Run the full local data wipe (spec §3.7 — 12 Drift tables +
+  //      media files + identity-tied preferences + regenerate Drift
+  //      DB-encryption key)
+  //   2. Show a one-time "Welcome back — fresh start" onboarding card
+  //      after the wipe completes
+  //
+  // Pre-delta clients ignore this field (proto3 default false = treat
+  // as initial commit, no special handling).
+  bool prior_identity_existed = 2;
 }
 
 message UploadPrekeysRequest {
