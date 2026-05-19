@@ -448,24 +448,72 @@ message RegisterIdentityKeyResponse {
   // docs/superpowers/specs/2026-05-16-sp7-re-registration-identity-
   // continuity-design.md §3.6).
   //
-  // True when RegisterIdentityKey accepted a NEW identity key for an
-  // EXISTING user (i.e. validateRotationAuth approved a rotation where
-  // device_identity_rotations.previous_identity_pub is non-null).
-  // Server has suppressed sync of the user's prior conversations +
-  // messages, deleted prekeys / sessions / group_members, revoked
-  // stale devices, and emitted KEY_CHANGE_ALERT + GroupMemberEvent +
-  // DEVICE_REVOKED to peers.
+  // True when the user record had a prior identity registration
+  // (server-side `previous != nil` in `UpsertIdentityKeyWithRotationAudit`
+  // — any prior commit, regardless of whether the key actually changed).
   //
-  // Client SHOULD:
-  //   1. Run the full local data wipe (spec §3.7 — 12 Drift tables +
-  //      media files + identity-tied preferences + regenerate Drift
-  //      DB-encryption key)
-  //   2. Show a one-time "Welcome back — fresh start" onboarding card
-  //      after the wipe completes
+  // 2026-05-19 clarification: this flag is INFORMATIONAL only — it
+  // fires for BOTH real rotations AND no-op refreshes of the same
+  // Ed25519 key. The earlier doc-comment incorrectly implied it only
+  // fires on key changes, which led the kayten-app SP-7 client to wipe
+  // local state on every re-registration including same-key refreshes
+  // (observed as an infinite re-registration loop on Pixel 10 + HSM
+  // re-provision, 2026-05-19 — see investigation memory).
+  //
+  // Client SHOULD use this field ONLY for the recovery-card / "welcome
+  // back" UX — NOT for gating local data wipe. Wipe decisions MUST
+  // use `is_rotation` (field 3) which carries the server's internal
+  // `isRotation = previous != nil && previous.Ed25519Pub != incoming.Ed25519Pub`
+  // semantic.
   //
   // Pre-delta clients ignore this field (proto3 default false = treat
   // as initial commit, no special handling).
   bool prior_identity_existed = 2;
+
+  // SP-7 v2 (2026-05-19) — explicit rotation discriminator.
+  //
+  // True when the server-side `isRotation = previous != nil &&
+  // previous.Ed25519Pub != incoming.Ed25519Pub` was true, i.e. the
+  // user re-registered with a DIFFERENT Ed25519 identity key than the
+  // currently-stored one. This is the exact gate the server uses
+  // internally to decide whether to run its own data-side wipe
+  // (`AffectedGroupIDs` soft-leave, `RevokedDeviceIDs` revocation,
+  // prekey deletion, KEY_CHANGE_ALERT fan-out).
+  //
+  // Client MUST use this field — NOT `prior_identity_existed` — to
+  // decide whether to run the SP-7 local data wipe. The earlier
+  // behavior of wiping on any `prior_identity_existed=true` caused
+  // an infinite re-registration loop after an HSM re-provision (every
+  // unlock retry hit the SP-7 path even though the local enrollment
+  // matched the re-sent identity).
+  //
+  // Wire-compat contract:
+  //
+  //   Pre-delta SERVER + post-delta CLIENT:
+  //     `is_rotation` arrives as proto3 default `false`. Client treats
+  //     "false" as "skip local wipe". This is SAFE — the only loss is
+  //     that genuine rotations against pre-delta servers won't trigger
+  //     the local wipe; users in that scenario must explicitly use the
+  //     "Erase and reset HSM" path. Pre-delta servers are end-of-life
+  //     once any client deploys this field.
+  //
+  //   Post-delta SERVER + pre-delta CLIENT:
+  //     Pre-delta clients keep wiping on every `prior_identity_existed`
+  //     bounce. Behavior is unchanged from the loop-bug state. Clients
+  //     MUST roll forward to consume `is_rotation`.
+  //
+  //   Post-delta SERVER + post-delta CLIENT:
+  //     Same-key refresh: prior_identity_existed=true, is_rotation=false
+  //       → client shows informational card, NO wipe. Loop gone.
+  //     Real rotation: prior_identity_existed=true, is_rotation=true
+  //       → client runs SP-7 wipe + shows card. Spec §3.7 semantics
+  //       preserved.
+  //     First commit: prior_identity_existed=false, is_rotation=false
+  //       → no card, no wipe.
+  //
+  // Pre-delta clients ignore this field entirely (no change in
+  // observable behavior).
+  bool is_rotation = 3;
 }
 
 message UploadPrekeysRequest {
