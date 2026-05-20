@@ -38,6 +38,7 @@ message Envelope {
     KeyRatchetNotify key_ratchet_notify = 32;
     KeyChangeAlert key_change_alert = 33;
     PresenceUpdate presence_update = 40;
+    ProfileUpdate profile_update = 41;
     SyncRequest sync_request = 50;
     SyncResponse sync_response = 51;
     WsAuthRequest ws_auth_request = 60;
@@ -88,6 +89,7 @@ enum EnvelopeType {
   REMOVE_REACTION = 29;
   SET_CONVERSATION_TTL = 35;
   PRESENCE_UPDATE = 30;
+  PROFILE_UPDATE = 31;
   SYNC_REQUEST = 40;
   SYNC_RESPONSE = 41;
   DEVICE_ATTESTATION_CHALLENGE = 50;
@@ -562,6 +564,44 @@ message PresenceUpdate {
   string user_id = 1;
   bool online = 2;
   google.protobuf.Timestamp last_seen = 3;
+}
+
+// PROFILE_UPDATE envelope payload. Fan-out by the server after a
+// successful `UserService.UpdateProfile` RPC to every peer who shares
+// a 1:1 conversation with the updating user, plus every co-member of
+// any group the updating user belongs to. The recipient client uses
+// this to refresh its local `contacts.displayName` / `avatarUrl` row
+// for the rotating user, which in turn re-renders the Chats list
+// tile title via the existing contacts->conversation provider join.
+//
+// Not encrypted: the server already sees these fields via the
+// `UpdateProfile` RPC body and the existing contact-discovery flow,
+// so an additional E2E wrap would not constrain server-side
+// visibility further. Display name + avatar URL are user-published
+// profile metadata, not message content.
+//
+// MoHSM-61 part 2 — cross-repo plan landed 2026-05-20. Pre-delta
+// clients ignore unknown envelopes (Dart proto wire decoder); the
+// client-side mitigation in `conversationListProvider` is the
+// fallback when the server has not yet been upgraded.
+message ProfileUpdate {
+  // User id of the user whose profile changed.
+  string user_id = 1;
+
+  // New display name. Empty string means "unchanged" — clients MUST
+  // NOT overwrite a populated local displayName with an empty
+  // server-side value, so a user can clear neither field without an
+  // explicit delete contract (out of scope for this delta).
+  string display_name = 2;
+
+  // New avatar URL. Empty string means "unchanged" with the same
+  // contract as display_name.
+  string avatar_url = 3;
+
+  // Server-side wall-clock at which the update was persisted. Used
+  // by clients as a last-write-wins tiebreaker if two updates race
+  // (e.g. one over WS and one via discovery refresh).
+  google.protobuf.Timestamp updated_at = 4;
 }
 
 message SyncRequest {
