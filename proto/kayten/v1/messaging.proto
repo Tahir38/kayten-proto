@@ -55,6 +55,14 @@ message Envelope {
     SetConversationTtl set_conversation_ttl = 87;
     PinMessage pin_message = 88;
     UnpinMessage unpin_message = 89;
+    GroupCallOffer group_call_offer = 90;
+    GroupCallRinging group_call_ringing = 91;
+    GroupCallJoin group_call_join = 92;
+    GroupCallPeerOffer group_call_peer_offer = 93;
+    GroupCallPeerAnswer group_call_peer_answer = 94;
+    GroupCallPeerIceCandidate group_call_peer_ice_candidate = 95;
+    GroupCallLeave group_call_leave = 96;
+    GroupCallPeerEpochRotate group_call_peer_epoch_rotate = 97;
     ErrorPayload error_payload = 99;
   }
 }
@@ -97,6 +105,15 @@ enum EnvelopeType {
   // parity). Newer pin replaces oldest when the cap is reached.
   PIN_MESSAGE = 36;
   UNPIN_MESSAGE = 37;
+  // MoHSM-75 — Group voice calls (full-mesh, 5-cap, audio-only V1)
+  GROUP_CALL_OFFER = 42;
+  GROUP_CALL_RINGING = 43;
+  GROUP_CALL_JOIN = 44;
+  GROUP_CALL_PEER_OFFER = 52;
+  GROUP_CALL_PEER_ANSWER = 53;
+  GROUP_CALL_PEER_ICE_CANDIDATE = 54;
+  GROUP_CALL_LEAVE = 55;
+  GROUP_CALL_PEER_EPOCH_ROTATE = 56;
   PRESENCE_UPDATE = 30;
   PROFILE_UPDATE = 31;
   SYNC_REQUEST = 40;

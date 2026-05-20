@@ -177,3 +177,140 @@ message CallVoiceRekey {
   // contract and removes the unrepresentable upper half.
   uint32 epoch_id = 3;
 }
+
+// ── MoHSM-75: Group voice calls (full-mesh, audio-only V1) ──────────────
+//
+// Topology: N participants each maintain N-1 PeerConnections (full mesh).
+// Per-pair voice ECDH derives a Mode B epoch key independently for each
+// pair. Server is a stateless signaling relay (mirrors the 1:1 CALL_*
+// pattern); conference membership lives in the participants' WS sessions
+// + reconstructs from JOIN / LEAVE events.
+//
+// Cap: 5 participants enforced client-side; the server enforces nothing
+// crypto-relevant on these envelopes.
+
+// GroupCallOffer is the conference initiator's broadcast invite. Server
+// fans out to every conversation member except the caller.
+message GroupCallOffer {
+  string conversation_id = 1;
+  string call_id = 2;
+  // Caller's user id; receivers display this as the "incoming group
+  // call from {caller}" hint. Authoritative routing of the envelope
+  // remains the server's job.
+  string caller_user_id = 3;
+  // Caller's Ed25519 identity pub (CAP_WIRE_IDENTITY_V1 contract; every
+  // composite envelope carries the signer pub for the receiver's TOFU
+  // cache match). Pair-wise SDP signatures live on GroupCallPeerOffer /
+  // GroupCallPeerAnswer; this field authenticates the caller's
+  // membership invite itself.
+  bytes signer_identity_pub = 4;
+}
+
+// GroupCallRinging acknowledges that an invited callee's device is
+// ringing the user. Optional — mirrors 1:1 CallRinging. Server fans
+// out to every current conference participant.
+message GroupCallRinging {
+  string conversation_id = 1;
+  string call_id = 2;
+  string from_user_id = 3;
+}
+
+// GroupCallJoin is sent by a callee who has accepted the invite. Server
+// fans out to every other current conference participant. On receipt,
+// each existing participant initiates a pair-wise GroupCallPeerOffer
+// using the tie-breaker rule (lower user_id is initiator).
+message GroupCallJoin {
+  string conversation_id = 1;
+  string call_id = 2;
+  string joiner_user_id = 3;
+}
+
+// GroupCallPeerOffer is a pair-wise WebRTC SDP offer between two
+// conference participants. Server routes EXCLUSIVELY to `to_user_id` —
+// other participants do NOT receive this envelope. The voice ECDH
+// public key + signature are per-pair (each pair derives its own Mode B
+// epoch key independently).
+message GroupCallPeerOffer {
+  string conversation_id = 1;
+  string call_id = 2;
+  string from_user_id = 3;
+  string to_user_id = 4;
+  string sdp_offer = 5;
+  bytes dtls_fingerprint = 6;
+  bytes dtls_fingerprint_signature = 7;
+  bytes voice_ecdh_pub = 8;
+  // Ed25519(signer_identity_pub, transcript) where transcript =
+  // canonical_encode(call_id || from_user_id || to_user_id ||
+  // voice_ecdh_pub). Mirrors the 1:1 CallOffer.voice_ecdh_sig contract
+  // with `role` replaced by the explicit (from, to) tuple.
+  bytes voice_ecdh_sig = 9;
+  bytes signer_identity_pub = 10;
+  // TURN credentials populated by the server for the receiver.
+  string turn_username = 11;
+  string turn_credential = 12;
+  repeated string turn_urls = 13;
+}
+
+// GroupCallPeerAnswer is a pair-wise SDP answer. Server routes
+// EXCLUSIVELY to `to_user_id`.
+message GroupCallPeerAnswer {
+  string conversation_id = 1;
+  string call_id = 2;
+  string from_user_id = 3;
+  string to_user_id = 4;
+  string sdp_answer = 5;
+  bytes dtls_fingerprint = 6;
+  bytes dtls_fingerprint_signature = 7;
+  bytes voice_ecdh_pub = 8;
+  bytes voice_ecdh_sig = 9;
+  bytes signer_identity_pub = 10;
+  string turn_username = 11;
+  string turn_credential = 12;
+  repeated string turn_urls = 13;
+}
+
+// GroupCallPeerIceCandidate is a pair-wise ICE candidate. Server routes
+// EXCLUSIVELY to `to_user_id`.
+message GroupCallPeerIceCandidate {
+  string conversation_id = 1;
+  string call_id = 2;
+  string from_user_id = 3;
+  string to_user_id = 4;
+  string candidate = 5;
+  string sdp_mid = 6;
+  int32 sdp_mline_index = 7;
+}
+
+// GroupCallLeave indicates a participant has left the conference, either
+// gracefully (user pressed hangup), reactively (peer hung up so we
+// teardown), or by declining the original invite. Server fans out to
+// every other current conference participant.
+//
+// Canonical reason values (display-string mapping is a client concern):
+//   "hangup"      — user explicitly pressed hangup
+//   "declined"    — user declined the incoming invite (no JOIN was sent)
+//   "cap_reached" — auto-decline because joining would exceed the 5-cap
+//   "hsm_disconnect" — HSM detach mid-call (mirrors 1:1 HSM-unplug
+//                     CALL_HANGUP from SP-3-Android Task 4)
+//   "network"     — peer network gave up
+message GroupCallLeave {
+  string conversation_id = 1;
+  string call_id = 2;
+  string leaver_user_id = 3;
+  string reason = 4;
+}
+
+// GroupCallPeerEpochRotate rotates the Mode B voice epoch for a single
+// pair. Mirrors the 1:1 CallEpochRotate / CallVoiceRekey contract; the
+// rotation transcript is `canonical_encode(call_id || from_user_id ||
+// to_user_id || new_epoch_index_LE_4B)`. Server routes EXCLUSIVELY to
+// `to_user_id`.
+message GroupCallPeerEpochRotate {
+  string conversation_id = 1;
+  string call_id = 2;
+  string from_user_id = 3;
+  string to_user_id = 4;
+  uint32 new_epoch_index = 5;
+  bytes signer_identity_pub = 6;
+  bytes signature = 7;
+}
