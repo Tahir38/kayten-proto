@@ -53,6 +53,8 @@ message Envelope {
     RemoveReaction remove_reaction = 85;
     MessageEvent message_event = 86;
     SetConversationTtl set_conversation_ttl = 87;
+    PinMessage pin_message = 88;
+    UnpinMessage unpin_message = 89;
     ErrorPayload error_payload = 99;
   }
 }
@@ -88,6 +90,13 @@ enum EnvelopeType {
   ADD_REACTION = 28;
   REMOVE_REACTION = 29;
   SET_CONVERSATION_TTL = 35;
+  // MoHSM-73 — WhatsApp-style message pinning. Per-conversation soft
+  // pin (server relays the envelope to peers + other devices; pinned
+  // state is mirrored locally on each device). Pin cap enforced
+  // client-side: 1 for 1:1 conversations, 3 for groups (WhatsApp
+  // parity). Newer pin replaces oldest when the cap is reached.
+  PIN_MESSAGE = 36;
+  UNPIN_MESSAGE = 37;
   PRESENCE_UPDATE = 30;
   PROFILE_UPDATE = 31;
   SYNC_REQUEST = 40;
@@ -1002,6 +1011,28 @@ message MessageEvent {
 message SetConversationTtl {
   string conversation_id = 1;
   int32 ttl_seconds = 2;  // 0 = disabled
+}
+
+// MoHSM-73 — Pin a message. Soft pin: the server treats this as a
+// blind relay (per the "server is blind" architecture); the pinned
+// state is mirrored on every recipient device via this envelope. No
+// ciphertext, no key material — pinning is metadata only.
+//
+// Cap enforcement (1 for 1:1, 3 for groups) is a client-side concern.
+// When a new PIN_MESSAGE pushes the chat past its cap, the client
+// silently emits an UNPIN_MESSAGE for the oldest pinned row first.
+message PinMessage {
+  string message_id = 1;
+  string conversation_id = 2;
+  google.protobuf.Timestamp pinned_at = 3;
+}
+
+// MoHSM-73 — Unpin a previously-pinned message. Either an explicit
+// user action OR an implicit cap-driven eviction. Idempotent: applying
+// UnpinMessage to an already-unpinned row is a no-op on every device.
+message UnpinMessage {
+  string message_id = 1;
+  string conversation_id = 2;
 }
 
 message ErrorPayload {
