@@ -257,8 +257,8 @@ message GroupCallJoin {
 //       `voice_ecdh_pub`     — initiator's voice public key (64 bytes)
 //       `voice_ecdh_sig`     — Ed25519 signature over transcript
 //                              (call_id || from_user_id || to_user_id ||
-//                               voice_ecdh_pub || wrapped_epoch_key)
-//                              NOTE: not yet populated in V1 (C.3.4 gap)
+//                               voice_ecdh_pub). Populated by C.3.4;
+//                              receivers MUST reject unsigned PEER_OFFERs.
 //       `wrapped_epoch_key`  — EMPTY in V1 PEER_OFFER; epoch arrives via
 //                              GROUP_CALL_PEER_EPOCH_ROTATE after PEER_ANSWER
 //   * Callee ↔ Callee (post-key-distribution SDP-only peer pairs):
@@ -302,6 +302,9 @@ message GroupCallPeerAnswer {
   bytes dtls_fingerprint = 6;
   bytes dtls_fingerprint_signature = 7;
   bytes voice_ecdh_pub = 8;
+  // Ed25519 signature over transcript (call_id || from_user_id || to_user_id ||
+  // voice_ecdh_pub). Symmetric with GroupCallPeerOffer.voice_ecdh_sig; populated
+  // by C.3.4. Receivers MUST reject unsigned PEER_ANSWERs.
   bytes voice_ecdh_sig = 9;
   bytes signer_identity_pub = 10;
   string turn_username = 11;
