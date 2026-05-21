@@ -219,6 +219,13 @@ message GroupCallRinging {
 // fans out to every other current conference participant. On receipt,
 // each existing participant initiates a pair-wise GroupCallPeerOffer
 // using the tie-breaker rule (lower user_id is initiator).
+//
+// V1 note: GroupCallJoin does NOT carry a voice_ecdh_pub field. The
+// joiner's voice public key is exchanged in the PEER_ANSWER envelope.
+// As a result the initiator's PEER_OFFER ships with wrapped_epoch_key
+// EMPTY; the epoch is delivered via a follow-up GROUP_CALL_PEER_EPOCH_ROTATE
+// after the PEER_ANSWER arrives. V2+ MAY include voice_ecdh_pub on JOIN
+// so the initiator can include the wrapped key in the initial PEER_OFFER.
 message GroupCallJoin {
   string conversation_id = 1;
   string call_id = 2;
@@ -229,29 +236,36 @@ message GroupCallJoin {
 // conference participants. Server routes EXCLUSIVELY to `to_user_id` —
 // other participants do NOT receive this envelope.
 //
-// Voice-key distribution model (2026-05-21 product decision): the
-// CONFERENCE INITIATOR (the user who started the call) generates ONE
-// shared Mode B epoch key for the whole conference and distributes
-// it per-callee inside this envelope. Callees do NOT generate their
-// own voice keys — they unwrap the shared key from the initiator and
-// load it into their HSM voice session, mirroring 1:1 Mode B.
+// Voice-key distribution model: the CONFERENCE INITIATOR (the user who
+// started the call) generates ONE shared Mode B epoch key for the whole
+// conference and distributes it per-callee. Callees do NOT generate their
+// own voice keys — they unwrap the shared key from the initiator and load
+// it into their HSM voice session, mirroring 1:1 Mode B.
+//
+// V1 two-phase epoch delivery (initiator → callee):
+//   1. Initiator sends PEER_OFFER with `wrapped_epoch_key` EMPTY and
+//      `voice_ecdh_pub` carrying the initiator's voice public key. The
+//      joiner's voice pub is not yet known at JOIN time (GroupCallJoin
+//      carries no voice_ecdh_pub in V1).
+//   2. After the PEER_ANSWER arrives (carrying the joiner's voice pub),
+//      the initiator wraps the epoch and sends it via a follow-up
+//      GROUP_CALL_PEER_EPOCH_ROTATE. V2+ MAY include the wrapped key
+//      directly in PEER_OFFER once joiner's voice pub is published on JOIN.
 //
 // Wire fields by role:
-//   * Initiator → Callee (the very first PEER_OFFER each callee gets):
-//       `voice_ecdh_pub`     — initiator's voice public key
+//   * Initiator → Callee:
+//       `voice_ecdh_pub`     — initiator's voice public key (64 bytes)
 //       `voice_ecdh_sig`     — Ed25519 signature over transcript
 //                              (call_id || from_user_id || to_user_id ||
 //                               voice_ecdh_pub || wrapped_epoch_key)
-//       `wrapped_epoch_key`  — the shared Mode B epoch key wrapped via
-//                              ECDH(initiator_voice_priv,
-//                                   callee_voice_pub). The callee
-//                              unwraps with their voice priv + the
-//                              initiator's voice_ecdh_pub.
+//                              NOTE: not yet populated in V1 (C.3.4 gap)
+//       `wrapped_epoch_key`  — EMPTY in V1 PEER_OFFER; epoch arrives via
+//                              GROUP_CALL_PEER_EPOCH_ROTATE after PEER_ANSWER
 //   * Callee ↔ Callee (post-key-distribution SDP-only peer pairs):
 //       voice_ecdh_pub / voice_ecdh_sig / wrapped_epoch_key all left
 //       EMPTY — both callees already hold the shared epoch key from
-//       their respective initiator PEER_OFFERs, so this envelope
-//       carries only SDP + ICE coordinates for the audio transport.
+//       their respective initiator EPOCH_ROTATE deliveries, so this
+//       envelope carries only SDP + ICE coordinates for the audio transport.
 message GroupCallPeerOffer {
   string conversation_id = 1;
   string call_id = 2;
@@ -267,11 +281,13 @@ message GroupCallPeerOffer {
   string turn_username = 11;
   string turn_credential = 12;
   repeated string turn_urls = 13;
-  // Conference initiator → callee: the shared Mode B epoch key
-  // wrapped via ECDH(initiator_voice_priv, callee_voice_pub). Empty
-  // on callee↔callee PEER_OFFERs (the receiving callee already holds
-  // the shared epoch from their initiator's PEER_OFFER). See the
-  // class docstring above for the full distribution contract.
+  // Conference initiator → callee: EMPTY in the initial V1 PEER_OFFER
+  // (joiner's voice pub not yet known at JOIN time). The actual wrapped
+  // epoch key is delivered via GROUP_CALL_PEER_EPOCH_ROTATE after the
+  // PEER_ANSWER arrives carrying the joiner's voice_ecdh_pub. Always
+  // EMPTY on callee↔callee PEER_OFFERs (both sides already hold the
+  // shared epoch from their respective initiator EPOCH_ROTATE). See the
+  // message docstring above for the full V1 two-phase delivery contract.
   bytes wrapped_epoch_key = 14;
 }
 
