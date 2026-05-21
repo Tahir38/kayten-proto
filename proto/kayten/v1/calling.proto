@@ -227,9 +227,31 @@ message GroupCallJoin {
 
 // GroupCallPeerOffer is a pair-wise WebRTC SDP offer between two
 // conference participants. Server routes EXCLUSIVELY to `to_user_id` —
-// other participants do NOT receive this envelope. The voice ECDH
-// public key + signature are per-pair (each pair derives its own Mode B
-// epoch key independently).
+// other participants do NOT receive this envelope.
+//
+// Voice-key distribution model (2026-05-21 product decision): the
+// CONFERENCE INITIATOR (the user who started the call) generates ONE
+// shared Mode B epoch key for the whole conference and distributes
+// it per-callee inside this envelope. Callees do NOT generate their
+// own voice keys — they unwrap the shared key from the initiator and
+// load it into their HSM voice session, mirroring 1:1 Mode B.
+//
+// Wire fields by role:
+//   * Initiator → Callee (the very first PEER_OFFER each callee gets):
+//       `voice_ecdh_pub`     — initiator's voice public key
+//       `voice_ecdh_sig`     — Ed25519 signature over transcript
+//                              (call_id || from_user_id || to_user_id ||
+//                               voice_ecdh_pub || wrapped_epoch_key)
+//       `wrapped_epoch_key`  — the shared Mode B epoch key wrapped via
+//                              ECDH(initiator_voice_priv,
+//                                   callee_voice_pub). The callee
+//                              unwraps with their voice priv + the
+//                              initiator's voice_ecdh_pub.
+//   * Callee ↔ Callee (post-key-distribution SDP-only peer pairs):
+//       voice_ecdh_pub / voice_ecdh_sig / wrapped_epoch_key all left
+//       EMPTY — both callees already hold the shared epoch key from
+//       their respective initiator PEER_OFFERs, so this envelope
+//       carries only SDP + ICE coordinates for the audio transport.
 message GroupCallPeerOffer {
   string conversation_id = 1;
   string call_id = 2;
@@ -239,16 +261,18 @@ message GroupCallPeerOffer {
   bytes dtls_fingerprint = 6;
   bytes dtls_fingerprint_signature = 7;
   bytes voice_ecdh_pub = 8;
-  // Ed25519(signer_identity_pub, transcript) where transcript =
-  // canonical_encode(call_id || from_user_id || to_user_id ||
-  // voice_ecdh_pub). Mirrors the 1:1 CallOffer.voice_ecdh_sig contract
-  // with `role` replaced by the explicit (from, to) tuple.
   bytes voice_ecdh_sig = 9;
   bytes signer_identity_pub = 10;
   // TURN credentials populated by the server for the receiver.
   string turn_username = 11;
   string turn_credential = 12;
   repeated string turn_urls = 13;
+  // Conference initiator → callee: the shared Mode B epoch key
+  // wrapped via ECDH(initiator_voice_priv, callee_voice_pub). Empty
+  // on callee↔callee PEER_OFFERs (the receiving callee already holds
+  // the shared epoch from their initiator's PEER_OFFER). See the
+  // class docstring above for the full distribution contract.
+  bytes wrapped_epoch_key = 14;
 }
 
 // GroupCallPeerAnswer is a pair-wise SDP answer. Server routes
@@ -300,11 +324,17 @@ message GroupCallLeave {
   string reason = 4;
 }
 
-// GroupCallPeerEpochRotate rotates the Mode B voice epoch for a single
-// pair. Mirrors the 1:1 CallEpochRotate / CallVoiceRekey contract; the
-// rotation transcript is `canonical_encode(call_id || from_user_id ||
-// to_user_id || new_epoch_index_LE_4B)`. Server routes EXCLUSIVELY to
-// `to_user_id`.
+// GroupCallPeerEpochRotate rotates the shared Mode B voice epoch for
+// the conference. ONLY the conference initiator emits this envelope
+// (mirrors the voice-key distribution model on GroupCallPeerOffer:
+// the initiator is the sole key source). Server routes EXCLUSIVELY
+// to `to_user_id`; one envelope per current callee.
+//
+// The rotation transcript is `canonical_encode(call_id || from_user_id
+// || to_user_id || new_epoch_index_LE_4B || wrapped_epoch_key)`. Each
+// callee unwraps `wrapped_epoch_key` via ECDH(callee_voice_priv,
+// initiator_voice_pub) and loads the new epoch into their HSM voice
+// session.
 message GroupCallPeerEpochRotate {
   string conversation_id = 1;
   string call_id = 2;
@@ -313,4 +343,13 @@ message GroupCallPeerEpochRotate {
   uint32 new_epoch_index = 5;
   bytes signer_identity_pub = 6;
   bytes signature = 7;
+  // Conference initiator's voice public key (for callee's ECDH unwrap).
+  // The initiator's voice keypair stays constant across the entire
+  // conference; this field exists so a receiver who somehow lost the
+  // initiator's voice pub (e.g. session restart mid-call) can still
+  // unwrap the new epoch without re-running JOIN.
+  bytes voice_ecdh_pub = 8;
+  // Shared Mode B epoch key wrapped via ECDH(initiator_voice_priv,
+  // callee_voice_pub).
+  bytes wrapped_epoch_key = 9;
 }
