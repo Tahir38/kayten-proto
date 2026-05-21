@@ -105,7 +105,11 @@ enum EnvelopeType {
   // parity). Newer pin replaces oldest when the cap is reached.
   PIN_MESSAGE = 36;
   UNPIN_MESSAGE = 37;
-  // MoHSM-75 — Group voice calls (full-mesh, 5-cap, audio-only V1)
+  // MoHSM-75 — Group voice calls (full-mesh, 5-cap, audio-only V1).
+  // Broadcast envelopes 42-44; pair-wise envelopes 52-56.
+  // Numeric gap at 45-51 is intentional: 50 = DEVICE_ATTESTATION_CHALLENGE,
+  // 51 = DEVICE_REVOKED are pre-existing and would have been a collision
+  // under the original 45-52 spec block.
   GROUP_CALL_OFFER = 42;
   GROUP_CALL_RINGING = 43;
   GROUP_CALL_JOIN = 44;
