@@ -554,6 +554,22 @@ message GetPrekeyResponse {
   Prekey one_time_prekey = 2;
   bytes identity_ed25519_pub = 3;
   bytes identity_ecdh_pub = 4;
+
+  // MoHSM-97 spec §3.1 — the recipient device's
+  // `current_identity_commit_epoch` at the moment this prekey bundle
+  // was issued. The sender persists this value alongside the bootstrapped
+  // session state so subsequent outbound 1:1 envelopes can stamp it on
+  // SendMessage / GroupSenderKey. Server uses the stamp to detect that
+  // the sender's session was built against a stale recipient identity
+  // (post-rotation re-enrollment race).
+  //
+  // SECURITY: MUST be read from the writer pool in the same transaction
+  // as the prekey row to avoid replica-lag races (spec §5.3 —
+  // ClaimPrekeyBundleWithEpoch atomic transaction requirement).
+  //
+  // Proto3 default 0 on pre-delta servers — sender MUST treat 0 as
+  // "epoch unknown" and bootstrap a legacy session without stamping.
+  uint64 issued_at_identity_commit_epoch = 5;
 }
 
 message GetDeviceIdentityKeyRequest {
