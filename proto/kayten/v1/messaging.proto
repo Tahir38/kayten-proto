@@ -1109,4 +1109,34 @@ message UnpinMessage {
 message ErrorPayload {
   int32 code = 1;
   string message = 2;
+
+  // MoHSM-97 spec §3.2 — stable string error code for client routing
+  // logic. Examples: "STALE_RECIPIENT_SESSION", "INVALID_RECIPIENT_EPOCH".
+  // Empty for legacy/unrouted errors. Receivers MUST route on this
+  // field, NOT on the numeric `code` (which remains for legacy compat).
+  //
+  // WsClient routing (spec §6.8): if stable_error_code == "STALE_RECIPIENT_SESSION",
+  // consume and call StaleRecipientSessionRecoveryService; do NOT forward
+  // to IncomingMessageHandler._handleError. All other values preserve
+  // existing forwarding behavior.
+  string stable_error_code = 3;
+
+  // MoHSM-97 spec §3.2 — identifier of the envelope this error refers to.
+  // For SendMessage: the client_msg_id of the rejected envelope.
+  // For GroupSenderKey: the original envelope id (no client_msg_id field).
+  // Empty for unsolicited errors. Receivers correlate to the in-memory
+  // pending-ack map by this field (spec §6.8 removePendingAckForError).
+  string original_envelope_id = 4;
+
+  // MoHSM-97 spec §3.2 — optional structured details, k/v map for
+  // stable_error_code-specific context. MUST NOT contain plaintext or
+  // key material.
+  //
+  // For STALE_RECIPIENT_SESSION and INVALID_RECIPIENT_EPOCH the server
+  // populates:
+  //   "sent_epoch"          -> "<uint64 as decimal string>"
+  //   "current_epoch"       -> "<uint64 as decimal string>"
+  //   "recipient_device_id" -> "<uuid>"
+  // Empty for error codes without structured details.
+  map<string, string> details = 5;
 }
