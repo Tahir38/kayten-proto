@@ -514,6 +514,25 @@ message RegisterIdentityKeyResponse {
   // Pre-delta clients ignore this field entirely (no change in
   // observable behavior).
   bool is_rotation = 3;
+
+  // MoHSM-97 spec §3.1 — device identity commit epoch accepted by the
+  // server for this registration or rotation. Clients MUST persist this
+  // value after any local SP-7 wipe side-effects complete, then use it
+  // for receiver-side stale-envelope defense (spec §6.4).
+  //
+  // Ordering requirement (spec §6.4): when SP-7 triggers
+  // LocalWipeService.wipe(), call EnrollmentManager.recordEpochFromServer
+  // ONLY after wipe completes and preserved auth/enrollment state is
+  // restored. A premature write can be overwritten by the wipe.
+  //
+  // Populated by the server from the epoch value returned by the
+  // identity-rotation transaction (spec §5.2). First registration = 1.
+  // Same-key refresh = returns the current epoch unchanged.
+  //
+  // Proto3 default 0 on pre-delta servers — app MUST treat 0 as
+  // "epoch unknown, retry on next successful login" and MUST NOT
+  // persist 0 as the local current epoch.
+  uint64 current_identity_commit_epoch = 4;
 }
 
 message UploadPrekeysRequest {
