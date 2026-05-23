@@ -385,6 +385,28 @@ message SendMessage {
   // send" (proto3 default — receivers MUST treat 0 as absent).
   // Server relays this field transparently.
   uint32 group_chain_id = 23;
+
+  // MoHSM-97 spec §3.2 — the recipient device's
+  // `current_identity_commit_epoch` as known to the sender at SESSION
+  // BOOTSTRAP time. Stamped on every outbound 1:1 SendMessage built
+  // from that session.
+  //
+  // Server validation rules (spec §5.4):
+  //   sent == current  → ACCEPT
+  //   sent  < current  → REJECT STALE_RECIPIENT_SESSION
+  //   sent  > current  → REJECT INVALID_RECIPIENT_EPOCH
+  //   sent == 0        → lenient ACCEPT during migration window;
+  //                      strict REJECT post-migration.
+  //
+  // Proto3 default 0 means "pre-delta sender" — server is lenient
+  // during the migration window and logs a rate-limited warning.
+  // See spec §11 for the deployment order: lenient first, then strict
+  // only after zero-stamp traffic is eliminated from supported builds.
+  //
+  // Group messages (recipient_id empty, group_chain_id present) carry
+  // this field at proto3 default 0 and are not validated by the
+  // recipient-epoch guard. Only 1:1 recipient device targets are in scope.
+  uint64 recipient_identity_commit_epoch_at_session = 24;
 }
 
 message ReceiveMessage {
