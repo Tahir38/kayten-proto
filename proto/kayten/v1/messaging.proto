@@ -562,6 +562,19 @@ message ReceiveMessage {
   // Group sender-key chain id, relayed verbatim from the sending
   // device's SendMessage.group_chain_id. See SendMessage docblock.
   uint32 group_chain_id = 29;
+
+  // MoHSM-97 spec §3.2 — server relays the SendMessage value verbatim.
+  // Receiver consumes for defense-in-depth check (spec §6.9):
+  //   if stamped > 0 && stamped < EnrollmentManager.currentCommitEpoch():
+  //     persist failed row with MessageDecryptStatus.failedStalePeerBundleReceived
+  //
+  // This is defense-in-depth only; the expected behavior is server-side
+  // rejection before delivery (spec §5.4). Receivers MUST NOT delete the
+  // local session or send a retry signal to the sender on this path.
+  //
+  // Proto3 default 0 = server did not stamp (pre-delta server or group
+  // message); receiver skips the defense check when 0.
+  uint64 recipient_identity_commit_epoch_at_session = 30;
 }
 
 message MessageAck {
