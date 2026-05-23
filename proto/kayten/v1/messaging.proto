@@ -794,6 +794,21 @@ message GroupSenderKey {
   // fall back to any server-side identity lookup. See the
   // SendMessage.signer_identity_pub docblock for the full contract.
   bytes signer_identity_pub = 15;
+
+  // MoHSM-97 spec §3.2 — same semantics as
+  // SendMessage.recipient_identity_commit_epoch_at_session. Stamped on
+  // each per-recipient SKDM fanout envelope. The 1:1 session ciphertext
+  // inside `ciphertext` is encrypted under the recipient's ratchet state,
+  // so the same staleness failure mode applies as SendMessage.
+  //
+  // Server resolves `target_user_id` → active device and validates per
+  // the same guard as SendMessage (spec §5.4). In future multi-device
+  // fanout, each per-device envelope MUST carry its own stamp — do not
+  // silently reuse one user's stamp for multiple devices.
+  //
+  // Proto3 default 0 = pre-delta sender; server is lenient during the
+  // migration window. See spec §11.
+  uint64 recipient_identity_commit_epoch_at_session = 16;
 }
 
 // SkdmPayload is the plaintext carried inside GroupSenderKey.ciphertext.
