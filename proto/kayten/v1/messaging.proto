@@ -616,6 +616,64 @@ message ReceiveMessage {
   // Proto3 default 0 = server did not stamp (pre-delta server or group
   // message); receiver skips the defense check when 0.
   uint64 recipient_identity_commit_epoch_at_session = 30;
+
+  // ── Unified crypto lifecycle — server-stamped sender generations ────────
+  // Fields 31–32 are STAMPED BY THE SERVER on outbound fan-out and on
+  // offline-sync drain, derived from `senderConn.DeviceID`'s current
+  // server-managed state. Senders NEVER supply these; receivers TRUST
+  // them as authoritative.
+  //
+  // Pre-delta servers omit these fields; receivers MUST treat absence
+  // (proto3 default 0) as "no generation signal" and fall back to the
+  // existing TOFU-only KEY_CHANGE_ALERT path. Non-breaking rollout.
+
+  // Unified crypto lifecycle §4.6 + §7 — the sender device's current
+  // `identity_generation` at the moment the server relayed this message.
+  // Receivers compare against the session row's `peerIdentityGeneration`:
+  //   advancing + TOFU pub mismatch → KEY_CHANGE_ALERT (warn, spec §7.2)
+  //   advancing + same TOFU pub    → defensive update of peerIdentityGeneration
+  //   equal or 0                   → no action
+  uint64 sender_identity_generation = 31;
+
+  // Unified crypto lifecycle §4.6 + §7 — the sender device's current
+  // `session_generation` at the moment the server relayed this message.
+  // Receivers compare against the session row's `peerSessionGeneration`:
+  //   sender_session_generation > peerSessionGeneration →
+  //     candidate-bootstrap adoption path (spec §7.3 — silent reinstall
+  //     recovery). Requires the envelope to carry a `prekey_bootstrap`.
+  //     On success: atomically replace live session, update peerSessionGeneration,
+  //     emit `SessionBootstrapAccepted` receipt.
+  //     On failure or missing bootstrap: stash for replay; sender's
+  //     bootstrap retransmit (spec §6) guarantees a bootstrap-bearing
+  //     message follows.
+  //   equal or 0 → no action (normal ratchet-forward message)
+  uint64 sender_session_generation = 32;
+
+  // ── Unified crypto lifecycle — relayed sender stamps (defense-in-depth) ─
+  // Fields 33–34 are relayed VERBATIM from the sender's SendMessage.
+  // The receiver uses them as a defense-in-depth check (spec §7 step 4):
+  // if a stamped generation is strictly less than the receiver's own
+  // current generation for that device, the message is from a sender
+  // whose session was built against an older state of THIS device.
+  // Expected behavior is server-side rejection before delivery (§4.5);
+  // these fields are the receiver-side backstop.
+  //
+  // Proto3 default 0 = server did not relay (pre-delta server or group
+  // message); receiver skips defense check when 0.
+
+  // Unified crypto lifecycle §7 step 4 — relayed from
+  // `SendMessage.recipient_identity_generation_at_session`. The receiver
+  // checks: if stamped > 0 and stamped < receiver's current identity_generation,
+  // the message was stamped against a stale identity of this device.
+  // Persist as `failedStalePeerBundleReceived`; do NOT delete the session.
+  uint64 recipient_identity_generation_at_session = 33;
+
+  // Unified crypto lifecycle §7 step 4 — relayed from
+  // `SendMessage.recipient_session_generation_at_session`. The receiver
+  // checks: if stamped > 0 and stamped < receiver's current session_generation,
+  // the message was stamped against a stale session of this device.
+  // Same fail-closed posture as field 33.
+  uint64 recipient_session_generation_at_session = 34;
 }
 
 message MessageAck {
