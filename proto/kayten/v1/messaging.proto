@@ -64,6 +64,11 @@ message Envelope {
     GroupCallLeave group_call_leave = 96;
     GroupCallPeerEpochRotate group_call_peer_epoch_rotate = 97;
     ErrorPayload error_payload = 99;
+    // Unified crypto lifecycle §6 + §7 — recipient confirms successful
+    // candidate-bootstrap adoption to sender. Sender stops retransmitting
+    // PrekeyBootstrap for this (conversation, recipient_device_id,
+    // sender_session_generation) tuple.
+    SessionBootstrapAccepted session_bootstrap_accepted = 100;
   }
 }
 
@@ -128,6 +133,10 @@ enum EnvelopeType {
   WS_AUTH_RESPONSE = 61;
   OPK_REPLENISH_NEEDED = 62;
   ERROR = 99;
+  // Unified crypto lifecycle §6 + §7 — recipient confirms successful
+  // candidate-bootstrap session adoption. Sender stops retransmitting
+  // PrekeyBootstrap on this session once this receipt arrives.
+  SESSION_BOOTSTRAP_ACCEPTED = 100;
 }
 
 // PrekeyBootstrap carries the metadata a responder needs to derive a fresh
@@ -156,6 +165,14 @@ message PrekeyBootstrap {
   // Optional sender device id, in case the message router needs it before
   // the responder has a contact entry.
   string sender_device_id = 5;
+
+  // Unified crypto lifecycle §6 — sender-minted idempotency key (random
+  // UUID-v4 per bootstrap attempt) stamped on every retransmitted
+  // bootstrap-bearing message for this attempt. The recipient echoes it
+  // verbatim in SessionBootstrapAccepted.bootstrap_id so the sender can
+  // correlate the receipt to exactly one open retransmit window. Empty
+  // from pre-delta senders.
+  string bootstrap_id = 6;
 }
 
 // ── Canonical composite messaging contract ─────────────────────────────
@@ -1233,6 +1250,56 @@ message PinMessage {
 message UnpinMessage {
   string message_id = 1;
   string conversation_id = 2;
+}
+
+// SessionBootstrapAccepted is sent by the RECIPIENT device back to the
+// SENDER after successfully adopting a candidate-bootstrap session
+// (spec §7.3 unified-crypto-lifecycle-design). It confirms that the
+// recipient's session is now established for the given
+// `sender_session_generation`, so the sender can stop attaching
+// `prekey_bootstrap` to subsequent messages.
+//
+// Correlation: the sender matches the receipt against its local
+// retransmit record using the tuple
+//   (conversation_id, recipient_device_id, sender_session_generation, bootstrap_id).
+// All four fields are required for unambiguous correlation.
+//
+// The server relays this envelope like any other receipt — it is
+// server_seq-ordered in the WS/offline-sync stream so it cannot be
+// raced by a subsequent message on the same session.
+//
+// The server NEVER originates this message. Only the recipient device
+// emits it after a successful candidate-bootstrap decrypt+verify.
+message SessionBootstrapAccepted {
+  // Conversation this bootstrap belongs to. Unambiguous even in
+  // multi-device scenarios where a user has several devices.
+  string conversation_id = 1;
+
+  // Device that sent the original `SendMessage` with `prekey_bootstrap`.
+  // Used by the sender to scope the correlation to its own device identity.
+  string sender_device_id = 2;
+
+  // Device that is emitting this receipt (the bootstrap recipient).
+  // Required so the sender can distinguish receipts from different
+  // recipient devices in future multi-device scenarios.
+  string recipient_device_id = 3;
+
+  // The `session_generation` the recipient has adopted for the sender
+  // device. The sender MUST stop retransmitting `prekey_bootstrap` on
+  // subsequent messages to this recipient device once this value matches
+  // its own `session_generation` column for that device.
+  uint64 sender_session_generation = 4;
+
+  // Opaque sender-chosen idempotency key, echoed verbatim from the
+  // inbound `PrekeyBootstrap.bootstrap_id` (added in Step 1b). The sender
+  // mints a random UUID-v4 per bootstrap attempt and stamps it on every
+  // retransmitted bootstrap-bearing message; the recipient copies it here
+  // on adoption so the sender can correlate the receipt to exactly one
+  // outstanding retransmit window. Empty on pre-delta senders (whose
+  // PrekeyBootstrap has no bootstrap_id); the recipient MUST still emit the
+  // receipt with an empty `bootstrap_id` so the sender can correlate by the
+  // other three fields.
+  string bootstrap_id = 5;
 }
 
 message ErrorPayload {
