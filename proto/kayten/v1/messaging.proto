@@ -386,6 +386,14 @@ message SendMessage {
   // Server relays this field transparently.
   uint32 group_chain_id = 23;
 
+  // DEPRECATED by unified crypto lifecycle spec §5 (2026-05-24).
+  // Superseded by `recipient_identity_generation_at_session` (field 25)
+  // + `recipient_session_generation_at_session` (field 26). Producers
+  // MUST stop populating this field once consumers read the new fields.
+  // Field number 24 and name "recipient_identity_commit_epoch_at_session"
+  // are reserved for future removal — never reuse.
+  //
+  // Original MoHSM-97 semantics follow:
   // MoHSM-97 spec §3.2 — the recipient device's
   // `current_identity_commit_epoch` as known to the sender at SESSION
   // BOOTSTRAP time. Stamped on every outbound 1:1 SendMessage built
@@ -406,7 +414,40 @@ message SendMessage {
   // Group messages (recipient_id empty, group_chain_id present) carry
   // this field at proto3 default 0 and are not validated by the
   // recipient-epoch guard. Only 1:1 recipient device targets are in scope.
-  uint64 recipient_identity_commit_epoch_at_session = 24;
+  uint64 recipient_identity_commit_epoch_at_session = 24 [deprecated = true];
+
+  // Unified crypto lifecycle §6 — the recipient device's `identity_generation`
+  // as persisted in the sender's session row at BOOTSTRAP TIME (captured from
+  // `GetPrekeyResponse.issued_at_identity_generation`).
+  //
+  // Server validation rules (spec §4.5):
+  //   stamped == current  → ACCEPT
+  //   stamped  < current (non-zero)  → REJECT, ErrorPayload stable_error_code = "STALE_RECIPIENT_IDENTITY"
+  //   stamped  > current  → REJECT, ErrorPayload stable_error_code = "INVALID_RECIPIENT_GENERATION"
+  //   stamped == 0        → lenient ACCEPT + rate-limited warn during migration window;
+  //                         strict REJECT post-migration (spec §9 step 4)
+  //
+  // Sender MUST fail-closed when the session row has no stamped generation
+  // (invalidate + rebootstrap before send — never stamp a guessed value).
+  //
+  // Proto3 default 0 = pre-delta sender; server is lenient during the
+  // migration window. Server relays this field verbatim to `ReceiveMessage`
+  // for receiver-side defense-in-depth (spec §7 step 4).
+  uint64 recipient_identity_generation_at_session = 25;
+
+  // Unified crypto lifecycle §6 — the recipient device's `session_generation`
+  // as persisted in the sender's session row at BOOTSTRAP TIME (captured from
+  // `GetPrekeyResponse.issued_at_session_generation`).
+  //
+  // Server validation rules (spec §4.5):
+  //   stamped == current  → ACCEPT
+  //   stamped  < current (non-zero)  → REJECT, ErrorPayload stable_error_code = "STALE_RECIPIENT_SESSION"
+  //   stamped  > current  → REJECT, ErrorPayload stable_error_code = "INVALID_RECIPIENT_GENERATION"
+  //   stamped == 0        → lenient ACCEPT + rate-limited warn during migration window
+  //
+  // Server relays this field verbatim to `ReceiveMessage.recipient_session_generation_at_session`.
+  // Proto3 default 0 = pre-delta sender; server is lenient during migration.
+  uint64 recipient_session_generation_at_session = 26;
 }
 
 message ReceiveMessage {
