@@ -439,6 +439,32 @@ message RegisterIdentityKeyRequest {
   // See FIX-3 in
   // `kayten-app/docs/superpowers/reviews/2026-05-09-audit-findings-and-remediation-roadmap.md`.
   repeated DeviceCapability advertised_device_capabilities = 12;
+
+  // Unified crypto lifecycle (spec 2026-05-24-unified-crypto-lifecycle-design.md §3).
+  // Random 16-byte id with messaging-state-lifetime semantics — generated
+  // when the local messaging/session database is first created, stored
+  // inside that database (or a store sharing its exact lifetime), and
+  // excluded from Android backup so a backup-restore that omits the
+  // session DB also yields a fresh id.
+  //
+  // The server compares this field against the stored `messaging_state_id`
+  // for this device in `UpsertIdentityKeyWithRotationAudit`. When it
+  // differs (messaging-state wipe — app reinstall, LocalWipeService.wipe,
+  // manual app-data clear), the server bumps `session_generation` for
+  // this device in the same transaction and revokes outstanding prekeys.
+  // When it matches, `session_generation` is NOT bumped (no-op refresh,
+  // kills refresh storms).
+  //
+  // MUST be sent on every `RegisterIdentityKey` call, including cold-start
+  // refreshes. Any messaging-state wipe MUST force a `RegisterIdentityKey`
+  // round-trip before messaging resumes (sending or receiving) so the
+  // server bumps `session_generation` before any envelope is stamped.
+  //
+  // Proto3 default (absent/zero-length): pre-delta client — server
+  // treats as legacy and does NOT bump `session_generation`. Non-breaking
+  // rollout: pre-delta clients continue to register without this field;
+  // their `session_generation` stays at the initialized value (1).
+  bytes messaging_state_id = 13;
 }
 
 message RegisterIdentityKeyResponse {
