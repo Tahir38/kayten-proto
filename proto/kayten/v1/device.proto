@@ -612,21 +612,46 @@ message GetPrekeyResponse {
   bytes identity_ed25519_pub = 3;
   bytes identity_ecdh_pub = 4;
 
-  // MoHSM-97 spec §3.1 — the recipient device's
-  // `current_identity_commit_epoch` at the moment this prekey bundle
-  // was issued. The sender persists this value alongside the bootstrapped
-  // session state so subsequent outbound 1:1 envelopes can stamp it on
-  // SendMessage / GroupSenderKey. Server uses the stamp to detect that
-  // the sender's session was built against a stale recipient identity
-  // (post-rotation re-enrollment race).
+  // DEPRECATED by unified crypto lifecycle spec §5 (2026-05-24).
+  // Superseded by `issued_at_identity_generation` (field 6) +
+  // `issued_at_session_generation` (field 7). Producers MUST stop
+  // populating this field once consumers read the new fields.
+  // Field number 5 and name "issued_at_identity_commit_epoch" are
+  // reserved for future removal — never reuse them.
+  uint64 issued_at_identity_commit_epoch = 5 [deprecated = true];
+
+  // Unified crypto lifecycle §4.4 — the recipient device's current
+  // `identity_generation` at the moment this prekey bundle was issued.
+  // The sender persists this alongside the bootstrapped session state
+  // in `SessionStates.recipientIdentityGenerationAtBootstrap` so
+  // subsequent outbound 1:1 envelopes can stamp it on
+  // `SendMessage.recipient_identity_generation_at_session`.
   //
   // SECURITY: MUST be read from the writer pool in the same transaction
-  // as the prekey row to avoid replica-lag races (spec §5.3 —
-  // ClaimPrekeyBundleWithEpoch atomic transaction requirement).
+  // as the prekey row claim (`ClaimPrekeyBundleWithEpoch` transaction,
+  // extended) to prevent replica-lag races.
   //
   // Proto3 default 0 on pre-delta servers — sender MUST treat 0 as
-  // "epoch unknown" and bootstrap a legacy session without stamping.
-  uint64 issued_at_identity_commit_epoch = 5;
+  // "generation unknown" and bootstrap a legacy session without stamping
+  // the generation fields on subsequent sends. Non-breaking rollout.
+  uint64 issued_at_identity_generation = 6;
+
+  // Unified crypto lifecycle §4.4 — the recipient device's current
+  // `session_generation` at the moment this prekey bundle was issued.
+  // The sender persists this in `SessionStates.recipientSessionGenerationAtBootstrap`.
+  //
+  // A `session_generation` observed at bundle-claim time represents a
+  // commitment: if the recipient reinstalls before the sender's first
+  // message arrives, the recipient's `session_generation` will have
+  // advanced on the server, and the server rejects the sender's stale
+  // envelope with `STALE_RECIPIENT_SESSION` (spec §4.5).
+  //
+  // MUST be read atomically with `issued_at_identity_generation` from
+  // the same writer-pool transaction.
+  //
+  // Proto3 default 0 on pre-delta servers — sender treats 0 as
+  // "generation unknown". Non-breaking rollout.
+  uint64 issued_at_session_generation = 7;
 }
 
 message GetDeviceIdentityKeyRequest {
