@@ -541,24 +541,55 @@ message RegisterIdentityKeyResponse {
   // observable behavior).
   bool is_rotation = 3;
 
-  // MoHSM-97 spec §3.1 — device identity commit epoch accepted by the
-  // server for this registration or rotation. Clients MUST persist this
-  // value after any local SP-7 wipe side-effects complete, then use it
-  // for receiver-side stale-envelope defense (spec §6.4).
+  // DEPRECATED by unified crypto lifecycle spec §5 (2026-05-24).
+  // Superseded by `identity_generation` (field 5) + `session_generation` (field 6)
+  // which are server-managed and never depend on firmware epoch reporting.
+  // Producers MUST stop populating this field once both consumer repos
+  // (kayten-app + kayten-server) are on builds that read the new fields.
+  // This field remains wire-present until a future release removes it and
+  // adds `reserved 4; reserved "current_identity_commit_epoch";`.
+  // Do NOT re-use field number 4 or name "current_identity_commit_epoch"
+  // for any new field.
   //
-  // Ordering requirement (spec §6.4): when SP-7 triggers
-  // LocalWipeService.wipe(), call EnrollmentManager.recordEpochFromServer
-  // ONLY after wipe completes and preserved auth/enrollment state is
-  // restored. A premature write can be overwritten by the wipe.
+  // Original MoHSM-97 semantics retained here for reference: device identity
+  // commit epoch accepted by the server for this registration or rotation.
+  uint64 current_identity_commit_epoch = 4 [deprecated = true];
+
+  // Unified crypto lifecycle §2 + §4.2 — server-managed, monotonic per-device
+  // identity generation counter. Starts at 1 on the device's first commit.
+  // Bumped by the server (in `UpsertIdentityKeyWithRotationAudit`) whenever
+  // the device's Ed25519 identity pub CHANGES — i.e. a real rotation.
+  // A same-key refresh does NOT bump this counter.
   //
-  // Populated by the server from the epoch value returned by the
-  // identity-rotation transaction (spec §5.2). First registration = 1.
-  // Same-key refresh = returns the current epoch unchanged.
+  // The server also bumps `session_generation` (field 6) whenever it bumps
+  // this field: rotation bumps BOTH; a pure reinstall (same pub, different
+  // messaging_state_id) bumps ONLY `session_generation`.
+  //
+  // Receivers use the server-stamped `sender_identity_generation` on
+  // `ReceiveMessage` to detect rotation — an advancing value (with TOFU
+  // pub mismatch confirmation) drives KEY_CHANGE_ALERT.
   //
   // Proto3 default 0 on pre-delta servers — app MUST treat 0 as
-  // "epoch unknown, retry on next successful login" and MUST NOT
-  // persist 0 as the local current epoch.
-  uint64 current_identity_commit_epoch = 4;
+  // "generation unknown, retry on next successful registration" and
+  // MUST NOT persist 0 as the local current generation.
+  uint64 identity_generation = 5;
+
+  // Unified crypto lifecycle §2 + §4.2 — server-managed, monotonic per-device
+  // session generation counter. Starts at 1 on the device's first commit.
+  // Bumped by the server when the device re-registers with a changed
+  // `messaging_state_id` (messaging-state wipe: same identity pub, different
+  // id). ALSO bumped on identity rotation (along with identity_generation).
+  //
+  // A same-pub, same-messaging_state_id refresh does NOT bump this counter.
+  //
+  // Receivers use the server-stamped `sender_session_generation` on
+  // `ReceiveMessage` to detect a peer reinstall (same identity, higher
+  // session_generation) and trigger candidate-bootstrap adoption (spec §7.3).
+  // This is the silent-recovery path — no KEY_CHANGE_ALERT, no user prompt.
+  //
+  // Proto3 default 0 on pre-delta servers — app MUST treat 0 as
+  // "generation unknown". Non-breaking rollout (see spec §9).
+  uint64 session_generation = 6;
 }
 
 message UploadPrekeysRequest {
