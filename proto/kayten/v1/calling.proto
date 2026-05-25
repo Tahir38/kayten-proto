@@ -189,8 +189,96 @@ message CallVoiceRekey {
 // Cap: 5 participants enforced client-side; the server enforces nothing
 // crypto-relevant on these envelopes.
 
+// ── Hardware group-call enablement: signed conference roster (spec §5.2) ──
+//
+// GroupRosterEntry binds a conference member's user_id to an Ed25519
+// identity public key and an initiator-assigned member_index. The
+// member_index is the load-bearing input for the per-sender IV that
+// prevents AES-GCM (key, IV) reuse across the <=5 senders sharing one
+// conference epoch (spec §5.1/§5.2). Each entry is authenticated only as
+// part of the full signed roster (GroupCallOffer.roster +
+// roster_signature) — an individual entry on its own is NOT trusted.
+message GroupRosterEntry {
+  // Conference member's user id (matches the user_id used throughout the
+  // GroupCall* envelopes and the server's membership view).
+  string user_id = 1;
+  // The member's Ed25519 identity public key (32 bytes, CAP_WIRE_IDENTITY_V1
+  // contract). Verifiers cross-check this against their TOFU cache for
+  // user_id; a mismatch is a KEY_CHANGE condition, not a silent accept.
+  bytes identity_pub = 2;
+  // Initiator-assigned per-member index, 0..4 for a <=5-member conference.
+  // Stable for the current epoch generation; never reused within an epoch
+  // (spec §5.3). Encoded into the per-sender IV. Receivers MUST validate
+  // global uniqueness across the roster and that their own user_id maps to
+  // the index they will stamp (spec §5.2) — duplicate index or missing
+  // self-entry => fail closed, abort the call.
+  uint32 member_index = 3;
+}
+
 // GroupCallOffer is the conference initiator's broadcast invite. Server
 // fans out to every conversation member except the caller.
+//
+// ── Signed roster contract (spec §15.5 — AUTHORITATIVE; also §5.2) ──
+// As of the hardware-group-call delta, GroupCallOffer carries the signed
+// conference roster. The initiator assigns each member a member_index and
+// signs the whole roster with its Ed25519 identity key. The signature input
+// is exactly (spec §15.5):
+//
+//     roster_signature = Ed25519(
+//         initiator_identity_priv,
+//         call_id(16) || epoch_gen_index(4 LE) || canonicalRoster() )
+//
+// where:
+//   * call_id(16)            = the 16-byte shared conference call id (spec
+//                              §15.1). It is the SAME value on every
+//                              participant's device and is the value bound
+//                              into the wrap AAD and this roster signature. It
+//                              is NOT the per-device 4-byte LE session_handle
+//                              (that is a routing reference only — never the
+//                              signature/AAD callId). Emitted as the 16 raw
+//                              bytes, NO length prefix and NO trailing
+//                              separator.
+//   * epoch_gen_index(4 LE)  = the `epoch_gen_index` field (field 6) encoded as
+//                              a little-endian unsigned 32-bit integer (4 bytes,
+//                              §15.1).
+//   * canonicalRoster()      = the deterministic canonical-roster encoding
+//                              defined immediately below (§15.5). This plan's
+//                              canonicalRoster() Dart helper is THE single
+//                              canonical implementation; plan 5 imports it.
+//
+// ── Canonical roster serialization (deterministic; signer == verifier) ──
+// canonicalRoster() is computed INDEPENDENTLY of protobuf wire field order,
+// so signer and verifier agree byte-for-byte regardless of how the repeated
+// `roster` field was serialized on the wire. This layout is frozen by spec
+// §15.5 (authoritative): entries sorted by user_id UTF-8 bytes ascending,
+// then count(2 LE) || for each { user_id_len(2 LE) || user_id ||
+// identity_pub_len(2 LE) || identity_pub || member_index(4 LE) }. The steps
+// below restate that exact layout — if any byte diverges from §15.5, §15.5
+// wins:
+//
+//   1. Sort the roster entries by user_id, comparing the raw UTF-8 byte
+//      sequences of user_id lexicographically (unsigned byte order). If two
+//      entries share a user_id the roster is invalid (reject before signing
+//      / before verifying) — user_id is unique per member.
+//   2. Emit a 2-byte little-endian unsigned entry count N (number of entries).
+//   3. For each entry, in the sorted order, emit:
+//        a. user_id:      2-byte LE length L1 || L1 bytes of UTF-8 user_id
+//        b. identity_pub: 2-byte LE length L2 || L2 bytes of identity_pub
+//        c. member_index: 4-byte LE unsigned int32
+//   4. Concatenate. The result is canonical(roster).
+//
+// All length prefixes are 2-byte LE (max 65535) and member_index is 4-byte
+// LE. There is NO padding, NO separators between fields beyond the length
+// prefixes, and NO trailing bytes. Empty roster => N=0 => the 2-byte count
+// is the entire canonical encoding (an empty roster is itself invalid for a
+// real call but the encoding is still well-defined).
+//
+// The roster is re-issued (re-signed, bumped epoch_gen_index, compacted) on
+// every rekey-on-leave (spec §6.3).
+//
+// Server relay: opaque, byte-for-byte. The server MUST NOT reorder, rewrite,
+// or synthesize roster, epoch_gen_index, or roster_signature; it does not
+// validate the signature (no key material is on the wire).
 message GroupCallOffer {
   string conversation_id = 1;
   string call_id = 2;
@@ -204,6 +292,20 @@ message GroupCallOffer {
   // GroupCallPeerAnswer; this field authenticates the caller's
   // membership invite itself.
   bytes signer_identity_pub = 4;
+  // Signed conference roster: one entry per current member (including the
+  // initiator), <=5 entries for a 5-cap conference. See the message
+  // docblock for the signature + canonical-serialization contract.
+  repeated GroupRosterEntry roster = 5;
+  // Monotonic epoch generation index for the conference. Bound into the
+  // roster signature and into the per-callee epoch wrap AAD (spec §4.2);
+  // bumped on every rekey-on-leave (spec §6.3). Little-endian 4-byte in the
+  // signing input.
+  uint32 epoch_gen_index = 6;
+  // Ed25519 signature by the initiator's identity key over
+  // call_id || epoch_gen_index_LE_4B || canonical(roster). See the message
+  // docblock. Every member verifies this against the initiator's known
+  // identity pub before trusting any member_index.
+  bytes roster_signature = 7;
 }
 
 // GroupCallRinging acknowledges that an invited callee's device is
