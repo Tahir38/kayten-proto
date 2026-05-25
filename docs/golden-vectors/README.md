@@ -37,3 +37,15 @@ go run gen_identity_registration_proof_v1_1_purpose_bound.go > identity-registra
 ```
 
 If the transcript format changes, the domain tag MUST also change (e.g. `kayten-identity-registration-v2`), and a new `*-v2.json` vector and generator script must be added. The old vectors and scripts stay in place until every consumer repo has removed v1 support.
+
+## Conference frame IV vectors
+
+`conference-frame-iv-v1.json` pins the **conference-only** key derivation + per-sender AES-GCM IV layout for hardware group calls (kayten-app spec `2026-05-25-hardware-group-call-enablement-design.md` §15.2 derivation + §15.6 IV layout). Every repo that derives conference keys or assembles a conference frame IV MUST load this file and assert byte-for-byte equality:
+
+- **Derivation (`derivation` block, §15.2):** `HKDF-SHA256(IKM = conference_root, salt = call_id, info = label, L = size)` with the frozen `-v01` labels (`kayten-conf-voice-epoch-inner/outer-v01`, `kayten-conf-video-epoch-v01`, `kayten-conf-voice-ivbase-inner/outer-v01`, `kayten-conf-video-ivbase-v01`) → `expected_hex`. The labels are owned by spec §15.2; no consumer may re-spell or re-version them.
+- **Voice IV (12B, §15.6):** `[ivBase:3B][memberIndex:1B][counter:8B big-endian]`
+- **Video IV (12B, §15.6):** `[ivBase:7B][memberIndex:1B][counter:4B big-endian]`
+
+Consumers: the firmware off-target harness (`mobile-hsm-gateway/hsm/tests/offtarget`, plan 3), the Kotlin `ConferenceFrameIv` builder (`kayten-app`, plan 5 voice), and the C++ video cryptor conference path (`kayten-app/android/app/src/main/cpp/kayten_video_frame_crypto/`, plan 6). The shipped **1:1** layouts (voice `[ivBase:4B][counter:8B]`, video `[ivBase:8B][counter:4B]`) are NOT covered here and MUST NOT change.
+
+`counter` is the decimal counter; `counter_hex` (present on vectors above `2^53`) is the exact big-endian counter bytes for parsers that lose float precision on large JSON numbers. `member_index` is the authenticated per-sender index (0–4) from the signed `GroupRoster`. Inputs are test-only.
