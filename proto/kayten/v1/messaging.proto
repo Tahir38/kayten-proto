@@ -35,6 +35,7 @@ message Envelope {
     CallDtlsFingerprint call_dtls_fingerprint = 25;
     CallVoiceRekey call_voice_rekey = 26;
     CallEpochRotate call_epoch_rotate = 27;
+    CallVideoState call_video_state = 28;
     KeyRatchetNotify key_ratchet_notify = 32;
     KeyChangeAlert key_change_alert = 33;
     PresenceUpdate presence_update = 40;
@@ -94,6 +95,7 @@ enum EnvelopeType {
   CALL_DTLS_FINGERPRINT = 15;
   CALL_VOICE_REKEY = 16;
   CALL_EPOCH_ROTATE = 17;
+  CALL_VIDEO_STATE = 18;
   KEY_RATCHET_NOTIFY = 22;
   KEY_CHANGE_ALERT = 23;
   GROUP_SENDER_KEY = 24;

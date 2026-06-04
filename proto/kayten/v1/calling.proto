@@ -152,6 +152,20 @@ message CallEpochRotate {
   bytes signature = 5;
 }
 
+// CALL_VIDEO_STATE — a device announces a change to ITS OWN outbound video
+// (network pause/resume). Directional self-announcement: paused=true means
+// "I paused my own outbound video"; the peer updates receive-side UI only.
+// Signed + TOFU-verified + seq-monotonic, identical posture to CallEpochRotate.
+message CallVideoState {
+  string conversation_id = 1;
+  string call_id = 2;
+  bool paused = 3;            // true = I paused my outbound video; false = resumed
+  uint32 reason = 4;          // 1 = networkPoor (only value in v1)
+  uint32 seq = 5;             // per-call, per-direction monotonic; receiver drops seq <= last
+  bytes signer_identity_pub = 6;  // 32B Ed25519
+  bytes signature = 7;            // 64B Ed25519 over the transcript
+}
+
 // CallVoiceRekey carries a Balanced Mode B epoch rotation for an active
 // call. See the "Voice mode contract" docblock at the top of this file.
 // For Strict Mode A this message is unused — Mode A rekey is owned by
