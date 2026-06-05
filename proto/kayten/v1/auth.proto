@@ -22,6 +22,18 @@ service AuthService {
 
   // Refresh an expired access token using a valid refresh token.
   rpc RefreshToken(RefreshRequest) returns (AuthTokenResponse);
+
+  // Set or replace the account registration-lock PIN (SIM-swap defense).
+  // JWT-gated; PIN is 6-8 ASCII digits. Stored only as an Argon2id verifier.
+  rpc SetRegistrationLock(SetRegistrationLockRequest) returns (SetRegistrationLockResponse);
+
+  // Remove the registration-lock (user opts back to SMS-only re-enrollment).
+  rpc RemoveRegistrationLock(RemoveRegistrationLockRequest) returns (RemoveRegistrationLockResponse);
+
+  // Verify the registration-lock PIN and exchange it for a single-use,
+  // short-lived recovery token to present on RegisterIdentityKey. Rate-limited
+  // + locked-out on repeated failures.
+  rpc ExchangeRegistrationLockForToken(ExchangeRegistrationLockForTokenRequest) returns (ExchangeRegistrationLockForTokenResponse);
 }
 
 message VerificationRequest {
@@ -119,4 +131,16 @@ message AuthTokenResponse {
 message RefreshRequest {
   string refresh_token = 1;
   string device_id = 2;
+}
+
+message SetRegistrationLockRequest { string pin = 1; }
+message SetRegistrationLockResponse {}
+
+message RemoveRegistrationLockRequest {}
+message RemoveRegistrationLockResponse {}
+
+message ExchangeRegistrationLockForTokenRequest { string pin = 1; }
+message ExchangeRegistrationLockForTokenResponse {
+  bytes recovery_token = 1;
+  int64 expires_at_unix_ms = 2;
 }
