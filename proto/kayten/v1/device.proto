@@ -31,6 +31,12 @@ service DeviceService {
   // Upload signed prekeys (SPK + OPK batch).
   rpc UploadPrekeys(UploadPrekeysRequest) returns (UploadPrekeysResponse);
 
+  // Atomically replace a device's entire published prekey bundle (signed
+  // prekey + the full one-time-prekey set) in one transaction. Used by the
+  // client login/enroll reconcile so the server never advertises prekey
+  // material the device can no longer honor (prekey-durability invariant).
+  rpc ReplacePrekeyBundle(ReplacePrekeyBundleRequest) returns (ReplacePrekeyBundleResponse);
+
   // Fetch a prekey bundle for initiating a session with a device.
   rpc GetPrekey(GetPrekeyRequest) returns (GetPrekeyResponse);
 
@@ -598,6 +604,21 @@ message UploadPrekeysRequest {
 }
 
 message UploadPrekeysResponse {
+  int32 stored_count = 1;
+}
+
+// Atomically replace a device's entire published prekey bundle. The server
+// deletes all prior signed + one-time prekeys for the device and inserts the
+// new set in a single transaction. Idempotent. Reuses the Prekey shape from
+// UploadPrekeys: exactly one signed prekey (is_one_time=false) plus the full
+// one-time-prekey set (is_one_time=true); prekey_id on the one-time entries is
+// the 1-based band index.
+message ReplacePrekeyBundleRequest {
+  string device_id = 1;
+  repeated Prekey prekeys = 2;
+}
+
+message ReplacePrekeyBundleResponse {
   int32 stored_count = 1;
 }
 
