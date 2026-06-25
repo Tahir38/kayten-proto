@@ -28,6 +28,13 @@ service DeviceService {
   // Register or replace the device identity key material after HSM setup.
   rpc RegisterIdentityKey(RegisterIdentityKeyRequest) returns (RegisterIdentityKeyResponse);
 
+  // Lightweight, session-authenticated refresh of this device's advertised
+  // runtime capabilities. Decoupled from RegisterIdentityKey: no proof, no HSM
+  // signature, no rotation audit. The device is taken from the JWT `did` claim,
+  // so a caller can only update its OWN device's capabilities.
+  rpc UpdateDeviceCapabilities(UpdateDeviceCapabilitiesRequest)
+      returns (UpdateDeviceCapabilitiesResponse);
+
   // Upload signed prekeys (SPK + OPK batch).
   rpc UploadPrekeys(UploadPrekeysRequest) returns (UploadPrekeysResponse);
 
@@ -825,4 +832,16 @@ message RevokeDeviceByCapabilityResponse {
   //   FAILED_PRECONDITION   — jti already used (idempotent success; app clears outbox)
   //   UNAUTHENTICATED       — signature invalid or exp in past
   //   RESOURCE_EXHAUSTED    — rate-limited (3 req/sub/min)
+}
+
+message UpdateDeviceCapabilitiesRequest {
+  // FULL current capability set for this device. REPLACE semantics: the server
+  // overwrites the column with exactly this set (empty clears it). Unknown enum
+  // values are ignored by the server (forward-compat).
+  repeated DeviceCapability advertised_device_capabilities = 1;
+}
+
+message UpdateDeviceCapabilitiesResponse {
+  // Echo of the stored set after the write (client-side confirmation).
+  repeated DeviceCapability stored_device_capabilities = 1;
 }
