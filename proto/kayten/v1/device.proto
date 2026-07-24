@@ -680,6 +680,14 @@ message GetPrekeyResponse {
   // Proto3 default 0 on pre-delta servers — sender treats 0 as
   // "generation unknown". Non-breaking rollout.
   uint64 issued_at_session_generation = 7;
+
+  // Spec A (per-device session keying, MoHSM-431/432) — the device_id whose
+  // prekey bundle was actually served. May differ from the requested id when
+  // the server resolved user_id -> active device (GetPrekey userId fallback).
+  // Clients MUST key their 1:1 session on this value (SessionStates.peerDeviceId).
+  // Proto3 default "" on pre-delta servers — client treats empty as "unknown,
+  // fall back to userId (single-device compat)". Non-breaking rollout.
+  string served_device_id = 8;
 }
 
 message GetDeviceIdentityKeyRequest {
